@@ -1,0 +1,102 @@
+# Bank CSV → YNAB Importer
+
+A small, **fully client-side** web app that imports a transaction CSV from
+**any bank** into one of your **YNAB** accounts.
+
+There is no backend and no database. You supply your own YNAB **Personal Access
+Token**, and it lives only in the browser tab's memory — it is sent **only** in
+the direct HTTPS calls to `api.ynab.com`, and is never written to disk,
+`localStorage`, a cookie, or any server. That's why this repo can safely be
+public: there are no secrets in it, and it never collects yours.
+
+**Live app:** _add your Render URL here once deployed_
+
+## What it does
+
+1. **Connect** — paste your YNAB Personal Access Token; the app loads your
+   budgets.
+2. **Account** — pick a budget (auto-selected if you only have one) and an open
+   account.
+3. **CSV** — drag & drop (or browse to) a CSV exported from your bank.
+4. **Review & import** — preview every transaction as a register with running
+   inflow/outflow totals, a date range, and a list of any rows it couldn't
+   read; then import. The app reports how many transactions YNAB created and how
+   many it skipped as duplicates.
+
+### How it reads bank CSVs
+
+Bank exports vary, so columns are detected by **header name**
+(case-insensitive), not position. This means most banks' CSVs work without any
+configuration:
+
+- **Date** — any header containing `date`. Accepts `DD/MM/YYYY`, `D/M/YYYY`,
+  2-digit years (→ `20xx`), and ISO `YYYY-MM-DD`. Dates are read **day-first**
+  (AU/UK style).
+- **Description** — a header containing `description`, `narrative`, `details`,
+  or `payee`.
+- **Amount** — either a single signed `amount` (or `value`) column, **or**
+  separate `debit`/`credit` (or `withdrawal`/`deposit`) columns. `$`, commas
+  and spaces are stripped; a debit becomes a negative (outflow), a credit a
+  positive (inflow).
+
+Before you import, the app shows you **which columns it detected** so you can
+confirm the mapping is right for your bank.
+
+Each transaction gets a stable `import_id` of the form
+`YNAB:{milliunits}:{date}:{occurrence}`, so **re-importing the same file is
+safe** — YNAB recognises and skips the duplicates. Rows with no readable date or
+amount are never silently dropped: they're excluded from the import and listed
+in the preview as skipped.
+
+A sample file, [`sample.csv`](sample.csv), is included so you can try the flow
+without exporting real data.
+
+## Getting a YNAB Personal Access Token
+
+1. Sign in to YNAB on the web.
+2. Go to **Account Settings → Developer Settings**
+   (<https://app.ynab.com/settings/developer>).
+3. Under **Personal Access Tokens**, click **New Token**, enter your password,
+   and copy the token.
+4. Paste it into the app. (You can revoke it any time from that same screen.)
+
+## Run it locally
+
+Requires [Node.js](https://nodejs.org/) 18+.
+
+```bash
+npm install
+npm run dev      # start the dev server (printed URL, usually http://localhost:5173)
+npm run build    # production build into dist/
+npm run preview  # preview the production build
+npm test         # run the CSV-parsing unit tests
+```
+
+## Deploy your own copy to Render (free)
+
+This repo includes a [`render.yaml`](render.yaml) blueprint that defines a single
+**free static site** (no cold starts, permanently free).
+
+1. Fork this repo to your own GitHub account.
+2. In the [Render dashboard](https://dashboard.render.com/), click
+   **New → Blueprint**.
+3. Connect your GitHub account if prompted, select your fork, and approve the
+   blueprint. Render reads `render.yaml`, runs `npm install && npm run build`,
+   and publishes the `dist/` folder.
+4. Render gives you a URL like `https://your-app.onrender.com`. Every push to
+   `main` afterwards auto-deploys.
+
+The blueprint also adds an SPA rewrite (all paths → `/index.html`) so deep links
+never 404.
+
+## Tech
+
+- [Vite](https://vite.dev/) + [React](https://react.dev/) (plain JSX)
+- [PapaParse](https://www.papaparse.com/) for CSV parsing
+- [lucide-react](https://lucide.dev/) for icons
+- YNAB calls go straight from the browser via `fetch` (YNAB's API allows CORS
+  from any origin)
+
+## License
+
+[MIT](LICENSE)
