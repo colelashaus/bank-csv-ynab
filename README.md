@@ -42,11 +42,35 @@ configuration:
 Before you import, the app shows you **which columns it detected** so you can
 confirm the mapping is right for your bank.
 
-Each transaction gets a stable `import_id` of the form
-`YNAB:{milliunits}:{date}:{occurrence}`, so **re-importing the same file is
-safe** — YNAB recognises and skips the duplicates. Rows with no readable date or
-amount are never silently dropped: they're excluded from the import and listed
-in the preview as skipped.
+Rows with no readable date or amount are never silently dropped: they're
+excluded from the import and listed in the preview as unreadable.
+
+### Duplicate detection
+
+Importing into an account that **already has transactions** (manual entries, a
+previous import, or a linked-bank feed) is the risky case, so the app runs two
+layers of protection:
+
+1. **Pre-import check (the important one).** Before you import, the app fetches
+   the selected account's existing transactions for the CSV's date range and
+   flags any row that looks like it's already there — matching the way YNAB's
+   own CSV import does:
+   - **amount** must be identical, **and**
+   - the **date** falls within a window you control (same-day up to ±7 days), **and**
+   - the **description** is compared with a `%like%` test (case-insensitive
+     substring either way, with a significant-word-overlap fallback) to raise
+     confidence and pick the best match.
+
+   Matching is **one-to-one**: each existing transaction can absorb at most one
+   CSV row, so three identical $5 coffees against one already in YNAB flags one
+   duplicate and imports the other two. Flagged duplicates are **excluded by
+   default**; each has an **"import anyway"** checkbox if you disagree.
+
+2. **YNAB `import_id` (the safety net).** Every transaction also gets a stable
+   `import_id` of the form `YNAB:{milliunits}:{date}:{occurrence}`, so even if
+   the pre-import check is skipped or misses something, **re-importing the same
+   file is still safe** — YNAB itself recognises and skips exact matches, and
+   reports how many it skipped.
 
 A sample file, [`sample.csv`](sample.csv), is included so you can try the flow
 without exporting real data.

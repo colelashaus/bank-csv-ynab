@@ -420,6 +420,97 @@ select.input {
   color: var(--warn);
 }
 
+/* ── Duplicate-check panel ──────────────────────── */
+.dedupe {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.dedupe svg {
+  flex: none;
+  margin-top: 2px;
+}
+.dedupe-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.dedupe-checking {
+  color: var(--text-dim);
+}
+.dedupe-clear {
+  border-color: rgba(63, 207, 142, 0.35);
+  background: rgba(63, 207, 142, 0.07);
+}
+.dedupe-clear svg {
+  color: var(--pos);
+}
+.dedupe-found {
+  border-color: rgba(91, 140, 255, 0.4);
+  background: rgba(91, 140, 255, 0.08);
+}
+.dedupe-found svg {
+  color: var(--accent);
+}
+.dedupe-warn {
+  border-color: rgba(245, 166, 35, 0.4);
+  background: rgba(245, 166, 35, 0.08);
+  color: #f6c873;
+}
+.dedupe-warn svg {
+  color: var(--warn);
+}
+.dedupe-window {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.dedupe-window select {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
+/* ── Badges ─────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.badge-new {
+  color: var(--pos);
+  background: rgba(63, 207, 142, 0.12);
+  border-color: rgba(63, 207, 142, 0.3);
+}
+.badge-dup {
+  color: var(--accent);
+  background: rgba(91, 140, 255, 0.14);
+  border-color: rgba(91, 140, 255, 0.35);
+}
+.badge-dup.conf-exact,
+.badge-dup.conf-high {
+  color: var(--warn);
+  background: rgba(245, 166, 35, 0.14);
+  border-color: rgba(245, 166, 35, 0.4);
+}
+
 /* ── Register table ─────────────────────────────── */
 .register-wrap {
   max-height: 420px;
@@ -474,6 +565,35 @@ select.input {
 }
 .amount-neg {
   color: var(--neg);
+}
+.status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 130px;
+}
+.override {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.override input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--accent);
+}
+.dup-reason {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+.row-dup td {
+  opacity: 0.55;
+}
+.row-dup td.status-cell {
+  opacity: 1;
 }
 
 /* ── Skipped ────────────────────────────────────── */

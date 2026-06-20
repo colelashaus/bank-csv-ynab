@@ -74,6 +74,22 @@ export async function getAccounts(token, budgetId) {
 }
 
 /**
+ * GET /budgets/{id}/accounts/{account_id}/transactions
+ * Used to pre-check for duplicates before importing. Optionally bounded with
+ * since_date (ISO YYYY-MM-DD) to only fetch transactions on/after that date.
+ * Filters out deleted transactions.
+ */
+export async function getAccountTransactions(token, budgetId, accountId, sinceDate) {
+  const q = sinceDate ? `?since_date=${encodeURIComponent(sinceDate)}` : ''
+  const body = await request(
+    `/budgets/${budgetId}/accounts/${accountId}/transactions${q}`,
+    token
+  )
+  const txns = body?.data?.transactions ?? []
+  return txns.filter((t) => !t.deleted)
+}
+
+/**
  * POST /budgets/{id}/transactions
  * @returns {{ created: number, duplicates: number }}
  */

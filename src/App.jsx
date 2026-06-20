@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Papa from 'papaparse'
 import {
   KeyRound,
@@ -14,14 +14,18 @@ import {
   ArrowUpRight,
   RefreshCw,
   ExternalLink,
+  Layers,
+  Search,
 } from 'lucide-react'
-import { getBudgets, getAccounts, createTransactions } from './lib/ynab.js'
 import {
-  detectColumns,
-  buildTransactions,
-  summarize,
-} from './lib/csv.js'
-import { money, displayDate } from './lib/format.js'
+  getBudgets,
+  getAccounts,
+  getAccountTransactions,
+  createTransactions,
+} from './lib/ynab.js'
+import { detectColumns, buildTransactions, summarize } from './lib/csv.js'
+import { findDuplicates, dedupeSummary } from './lib/dedupe.js'
+import { money, displayDate, shiftDate } from './lib/format.js'
 
 const STEPS = [
   { n: 1, label: 'Connect', icon: KeyRound },
@@ -52,6 +56,11 @@ export default function App() {
 
   // Step 4 — review + import
   const [cleared, setCleared] = useState(true)
+  const [windowDays, setWindowDays] = useState(3)
+  const [existing, setExisting] = useState(null) // { list, accountId }
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState(null)
+  const [overrides, setOverrides] = useState(() => new Set()) // indices to import anyway
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importError, setImportError] = useState(null)
@@ -59,7 +68,7 @@ export default function App() {
   const selectedBudget = budgets?.find((b) => b.id === budgetId) || null
   const selectedAccount = accounts?.find((a) => a.id === accountId) || null
 
-  // Recompute the transaction build whenever inputs change.
+  // Build YNAB transactions from the parsed CSV whenever inputs change.
   const built = useMemo(() => {
     if (!rows || !cols || !accountId) return null
     return buildTransactions(rows, cols, { accountId, cleared })
@@ -69,6 +78,66 @@ export default function App() {
     () => (built ? summarize(built.preview) : null),
     [built]
   )
+
+  // Fetch the account's existing transactions for the CSV's date range so we
+  // can flag rows that are already in YNAB. Re-runs when the file, account, or
+  // date window changes (not when the "cleared" toggle flips).
+  useEffect(() => {
+    if (!rows || !cols || !accountId || !budgetId) {
+      setExisting(null)
+      return
+    }
+    const s = built ? summarize(built.preview) : null
+    if (!s || !s.minDate) {
+      setExisting({ list: [], accountId })
+      return
+    }
+    let cancelled = false
+    setChecking(true)
+    setCheckError(null)
+    setOverrides(new Set())
+    const since = shiftDate(s.minDate, -(Math.max(windowDays, 7)))
+    getAccountTransactions(token.trim(), budgetId, accountId, since)
+      .then((list) => {
+        if (!cancelled) setExisting({ list, accountId })
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCheckError(err.message)
+          setExisting({ list: [], accountId })
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setChecking(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, cols, accountId, budgetId, token, windowDays])
+
+  // Classify each built transaction against the existing ones.
+  const dupResults = useMemo(() => {
+    if (!built || !existing || existing.accountId !== accountId) return null
+    return findDuplicates(built.transactions, existing.list, { windowDays })
+  }, [built, existing, accountId, windowDays])
+
+  const dupStats = dupResults ? dedupeSummary(dupResults) : null
+
+  // Which rows will actually be imported (non-duplicates + user overrides).
+  const importIndices = useMemo(() => {
+    if (!built) return []
+    return built.transactions
+      .map((_, i) => i)
+      .filter(
+        (i) =>
+          !dupResults ||
+          dupResults[i].status !== 'duplicate' ||
+          overrides.has(i)
+      )
+  }, [built, dupResults, overrides])
+
+  const importCount = importIndices.length
 
   async function handleConnect(e) {
     e.preventDefault()
@@ -161,22 +230,28 @@ export default function App() {
   }
 
   async function handleImport() {
-    if (!built || !built.transactions.length) return
+    const toImport = importIndices.map((i) => built.transactions[i])
+    if (!toImport.length) return
     setImporting(true)
     setImportError(null)
     setImportResult(null)
     try {
-      const result = await createTransactions(
-        token.trim(),
-        budgetId,
-        built.transactions
-      )
+      const result = await createTransactions(token.trim(), budgetId, toImport)
       setImportResult(result)
     } catch (err) {
       setImportError(err.message)
     } finally {
       setImporting(false)
     }
+  }
+
+  function toggleOverride(i) {
+    setOverrides((prev) => {
+      const next = new Set(prev)
+      if (next.has(i)) next.delete(i)
+      else next.add(i)
+      return next
+    })
   }
 
   function resetCsv() {
@@ -186,6 +261,7 @@ export default function App() {
     setParseError(null)
     setImportResult(null)
     setImportError(null)
+    setOverrides(new Set())
   }
 
   // Which step is "active" for the progress rail.
@@ -343,6 +419,16 @@ export default function App() {
           <Section step={4} title="Review & import" icon={ListChecks}>
             {summary && <SummaryStrip summary={summary} skipped={built.skipped} />}
 
+            <DuplicatePanel
+              checking={checking}
+              checkError={checkError}
+              existing={existing}
+              dupStats={dupStats}
+              accountName={selectedAccount?.name}
+              windowDays={windowDays}
+              onWindowDays={setWindowDays}
+            />
+
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -352,7 +438,12 @@ export default function App() {
               Mark imported transactions as <strong>cleared</strong>
             </label>
 
-            <Register preview={built.preview} />
+            <Register
+              preview={built.preview}
+              dupResults={dupResults}
+              overrides={overrides}
+              onToggleOverride={toggleOverride}
+            />
 
             {built.skipped.length > 0 && (
               <SkippedList skipped={built.skipped} />
@@ -362,21 +453,32 @@ export default function App() {
               <div className="import-target">
                 Importing into <strong>{selectedAccount?.name}</strong> in{' '}
                 <strong>{selectedBudget?.name}</strong>
+                {dupStats && dupStats.duplicates > 0 && (
+                  <>
+                    {' '}
+                    · {dupStats.duplicates} duplicate
+                    {dupStats.duplicates === 1 ? '' : 's'} skipped
+                    {overrides.size > 0 ? ` (${overrides.size} overridden)` : ''}
+                  </>
+                )}
               </div>
               <button
                 className="btn btn-primary btn-lg"
                 onClick={handleImport}
-                disabled={importing || built.transactions.length === 0}
+                disabled={importing || checking || importCount === 0}
               >
                 {importing ? (
                   <>
                     <Loader2 className="spin" size={18} /> Importing…
                   </>
+                ) : checking ? (
+                  <>
+                    <Loader2 className="spin" size={18} /> Checking…
+                  </>
                 ) : (
                   <>
-                    <UploadCloud size={18} /> Import{' '}
-                    {built.transactions.length} transaction
-                    {built.transactions.length === 1 ? '' : 's'}
+                    <UploadCloud size={18} /> Import {importCount} transaction
+                    {importCount === 1 ? '' : 's'}
                   </>
                 )}
               </button>
@@ -556,7 +658,7 @@ function SummaryStrip({ summary, skipped }) {
         }
       />
       <Stat
-        label="Skipped rows"
+        label="Unreadable rows"
         value={skipped.length}
         tone={skipped.length ? 'warn' : undefined}
       />
@@ -575,7 +677,78 @@ function Stat({ label, value, tone, icon: Icon }) {
   )
 }
 
-function Register({ preview }) {
+function DuplicatePanel({
+  checking,
+  checkError,
+  existing,
+  dupStats,
+  accountName,
+  windowDays,
+  onWindowDays,
+}) {
+  if (checking) {
+    return (
+      <div className="dedupe dedupe-checking">
+        <Loader2 className="spin" size={16} />
+        <span>Checking {accountName} for transactions already imported…</span>
+      </div>
+    )
+  }
+
+  if (checkError) {
+    return (
+      <div className="dedupe dedupe-warn">
+        <AlertTriangle size={16} />
+        <div>
+          <strong>Couldn’t check for existing transactions.</strong>{' '}
+          {checkError} You can still import, but duplicates won’t be filtered —
+          re-importing the same file is still safe (YNAB skips exact matches).
+        </div>
+      </div>
+    )
+  }
+
+  if (!dupStats || !existing) return null
+
+  const tone = dupStats.duplicates > 0 ? 'dedupe-found' : 'dedupe-clear'
+  return (
+    <div className={`dedupe ${tone}`}>
+      {dupStats.duplicates > 0 ? <Layers size={16} /> : <CheckCircle2 size={16} />}
+      <div className="dedupe-body">
+        {dupStats.duplicates > 0 ? (
+          <span>
+            <strong>{dupStats.duplicates}</strong> of {dupStats.total}{' '}
+            transaction{dupStats.total === 1 ? '' : 's'} look like they’re{' '}
+            <strong>already in {accountName}</strong> — excluded by default.{' '}
+            {dupStats.fresh} new to import. Tick “import anyway” on any row you
+            want to force in.
+          </span>
+        ) : (
+          <span>
+            Checked against {existing.list.length} existing transaction
+            {existing.list.length === 1 ? '' : 's'} in {accountName} — no
+            duplicates found. All {dupStats.total} look new.
+          </span>
+        )}
+        <label className="dedupe-window">
+          <Search size={13} /> Match window:
+          <select
+            value={windowDays}
+            onChange={(e) => onWindowDays(Number(e.target.value))}
+          >
+            <option value={0}>same day</option>
+            <option value={1}>±1 day</option>
+            <option value={3}>±3 days</option>
+            <option value={5}>±5 days</option>
+            <option value={7}>±7 days</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  )
+}
+
+function Register({ preview, dupResults, overrides, onToggleOverride }) {
   return (
     <div className="register-wrap">
       <table className="register">
@@ -584,25 +757,59 @@ function Register({ preview }) {
             <th>Date</th>
             <th>Payee</th>
             <th className="num">Amount</th>
+            <th>Status</th>
           </tr>
         </thead>
         <tbody>
-          {preview.map((p, i) => (
-            <tr key={i}>
-              <td className="mono nowrap">{displayDate(p.date)}</td>
-              <td className="payee-cell">
-                {p.payee || <span className="muted">(no description)</span>}
-                {p.memo && <span className="memo">{p.memo}</span>}
-              </td>
-              <td
-                className={`num mono ${
-                  p.dollars >= 0 ? 'amount-pos' : 'amount-neg'
-                }`}
+          {preview.map((p, i) => {
+            const dup = dupResults?.[i]
+            const isDup = dup?.status === 'duplicate'
+            const overridden = overrides.has(i)
+            const willImport = !isDup || overridden
+            return (
+              <tr
+                key={i}
+                className={isDup && !overridden ? 'row-dup' : ''}
               >
-                {money(p.dollars)}
-              </td>
-            </tr>
-          ))}
+                <td className="mono nowrap">{displayDate(p.date)}</td>
+                <td className="payee-cell">
+                  {p.payee || <span className="muted">(no description)</span>}
+                  {p.memo && <span className="memo">{p.memo}</span>}
+                </td>
+                <td
+                  className={`num mono ${
+                    p.dollars >= 0 ? 'amount-pos' : 'amount-neg'
+                  }`}
+                >
+                  {money(p.dollars)}
+                </td>
+                <td className="status-cell">
+                  {isDup ? (
+                    <>
+                      <span
+                        className={`badge badge-dup conf-${dup.confidence}`}
+                        title={dup.reason}
+                      >
+                        duplicate
+                      </span>
+                      <label className="override">
+                        <input
+                          type="checkbox"
+                          checked={overridden}
+                          onChange={() => onToggleOverride(i)}
+                        />
+                        import anyway
+                      </label>
+                      <span className="dup-reason">{dup.reason}</span>
+                    </>
+                  ) : (
+                    <span className="badge badge-new">new</span>
+                  )}
+                  {!willImport && <span className="visually-hidden">skipped</span>}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -614,7 +821,8 @@ function SkippedList({ skipped }) {
     <details className="skipped">
       <summary>
         <AlertTriangle size={15} /> {skipped.length} row
-        {skipped.length === 1 ? '' : 's'} skipped (not imported)
+        {skipped.length === 1 ? '' : 's'} unreadable (excluded — no date or
+        amount)
       </summary>
       <ul>
         {skipped.map((s) => (
@@ -638,10 +846,10 @@ function ImportResult({ result, onReset }) {
         </p>
         <p className="result-sub">
           {result.duplicates > 0
-            ? `${result.duplicates} skipped as duplicate${
+            ? `${result.duplicates} skipped by YNAB as duplicate${
                 result.duplicates === 1 ? '' : 's'
               } (already in YNAB).`
-            : 'No duplicates — all transactions were new.'}
+            : 'No duplicates reported by YNAB — all transactions were new.'}
         </p>
         <button className="btn btn-ghost btn-sm" onClick={onReset}>
           <RefreshCw size={14} /> Import another file
