@@ -42,28 +42,38 @@ test('daysApart counts whole days', () => {
   assert.equal(daysApart('2026-06-04', '2026-06-01'), 3)
 })
 
-test('findDuplicates — exact import_id is a definite duplicate', () => {
+test('findDuplicates — exact import_id is a definite (strong) duplicate', () => {
   const existing = [nt('2026-06-01', -4530, 'Woolworths', '', 'YNAB:-4530:2026-06-01:0')]
   const incoming = [nt('2026-06-01', -4530, 'Woolworths', '', 'YNAB:-4530:2026-06-01:0')]
   const r = findDuplicates(incoming, existing, { windowDays: 3 })
   assert.equal(r[0].status, 'duplicate')
   assert.equal(r[0].confidence, 'exact')
+  assert.equal(r[0].strong, true)
 })
 
-test('findDuplicates — same amount+date+desc = high confidence', () => {
+test('findDuplicates — same amount+date+desc = high (strong)', () => {
   const existing = [nt('2026-06-01', -4530, 'Woolworths Metro')]
   const incoming = [nt('2026-06-01', -4530, 'WOOLWORTHS METRO SYDNEY 1234')]
   const r = findDuplicates(incoming, existing)
-  assert.equal(r[0].status, 'duplicate')
   assert.equal(r[0].confidence, 'high')
+  assert.equal(r[0].strong, true)
 })
 
-test('findDuplicates — amount+date within window, different desc = low', () => {
+test('findDuplicates — amount+date within window, different desc = low (weak)', () => {
   const existing = [nt('2026-06-02', -2000, 'Shell Petrol')]
   const incoming = [nt('2026-06-01', -2000, 'Random Cafe')]
   const r = findDuplicates(incoming, existing, { windowDays: 3 })
   assert.equal(r[0].status, 'duplicate')
   assert.equal(r[0].confidence, 'low') // matched on amount+date only, date differs
+  assert.equal(r[0].strong, false) // weak: kept by default, just flagged
+})
+
+test('findDuplicates — same date, different desc = medium (strong)', () => {
+  const existing = [nt('2026-06-01', -2000, 'Shell Petrol')]
+  const incoming = [nt('2026-06-01', -2000, 'Random Cafe')]
+  const r = findDuplicates(incoming, existing, { windowDays: 3 })
+  assert.equal(r[0].confidence, 'medium')
+  assert.equal(r[0].strong, true)
 })
 
 test('findDuplicates — outside the date window is new', () => {
@@ -100,12 +110,13 @@ test('findDuplicates — different amount is never a duplicate', () => {
   assert.equal(r[0].status, 'new')
 })
 
-test('dedupeSummary counts correctly', () => {
+test('dedupeSummary counts strong vs weak', () => {
   const results = [
-    { status: 'duplicate' },
-    { status: 'new' },
-    { status: 'duplicate' },
+    { status: 'duplicate', strong: true },
+    { status: 'new', strong: false },
+    { status: 'duplicate', strong: false },
+    { status: 'duplicate', strong: true },
   ]
   const s = dedupeSummary(results)
-  assert.deepEqual(s, { total: 3, duplicates: 2, fresh: 1 })
+  assert.deepEqual(s, { total: 4, duplicates: 3, strong: 2, weak: 1, fresh: 1 })
 })

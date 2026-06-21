@@ -73,8 +73,18 @@ layers of protection:
 
    Matching is **one-to-one**: each existing transaction can absorb at most one
    CSV row, so three identical $5 coffees against one already in YNAB flags one
-   duplicate and imports the other two. Flagged duplicates are **excluded by
-   default**; each has an **"import anyway"** checkbox if you disagree.
+   duplicate and imports the other two.
+
+   Matches come in two strengths so a coincidence never silently drops a real
+   transaction:
+   - **Clear duplicates** (exact import id, or matching description) are
+     **excluded by default**.
+   - **Possible matches** (same amount and a nearby date but a *different*
+     description) are **kept by default and flagged "possible?"** for you to
+     review.
+
+   Every row has an **Import** checkbox, so you can include or exclude any
+   transaction regardless of how it was classified.
 
 2. **YNAB `import_id` (the safety net).** Every transaction also gets a stable
    `import_id` of the form `YNAB:{milliunits}:{date}:{occurrence}`, so even if

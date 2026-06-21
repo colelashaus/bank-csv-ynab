@@ -82,12 +82,20 @@ export function findDuplicates(newTxns, existing, opts = {}) {
     active.map((e) => e.import_id).filter(Boolean)
   )
 
+  // A match is "strong" (safe to exclude by default) when there's solid
+  // evidence it's the same transaction: an exact import_id, a description match,
+  // or the exact same date. A "weak" match shares only the amount and a nearby
+  // date with a *different* description — likely a coincidence, so it's flagged
+  // but kept in the import by default to avoid silently dropping a real row.
+  const STRONG = new Set(['exact', 'high', 'medium'])
+
   return newTxns.map((t) => {
     // Strongest signal: YNAB already has this exact import_id.
     if (t.import_id && existingImportIds.has(t.import_id)) {
       return {
         status: 'duplicate',
         confidence: 'exact',
+        strong: true,
         reason: 'Identical import id already in this account',
         match: null,
       }
@@ -98,7 +106,7 @@ export function findDuplicates(newTxns, existing, opts = {}) {
       (c) => !c.used && daysApart(c.tx.date, t.date) <= windowDays
     )
     if (!candidates.length) {
-      return { status: 'new', confidence: null, reason: null, match: null }
+      return { status: 'new', confidence: null, strong: false, reason: null, match: null }
     }
 
     // Prefer a description-like match, then the closest date.
@@ -119,14 +127,27 @@ export function findDuplicates(newTxns, existing, opts = {}) {
     const payee = descOf(best.tx) || '(no payee)'
     const reason = descMatch
       ? `Matches “${payee}” on ${best.tx.date}`
-      : `Same amount on ${best.tx.date} (description differs)`
+      : `Same amount as “${payee}” on ${best.tx.date} (description differs)`
 
-    return { status: 'duplicate', confidence, reason, match: best.tx }
+    return {
+      status: 'duplicate',
+      confidence,
+      strong: STRONG.has(confidence),
+      reason,
+      match: best.tx,
+    }
   })
 }
 
 /** Convenience counts for the UI. */
 export function dedupeSummary(results) {
-  const duplicates = results.filter((r) => r.status === 'duplicate').length
-  return { total: results.length, duplicates, fresh: results.length - duplicates }
+  const dups = results.filter((r) => r.status === 'duplicate')
+  const strong = dups.filter((r) => r.strong).length
+  return {
+    total: results.length,
+    duplicates: dups.length,
+    strong, // excluded by default
+    weak: dups.length - strong, // flagged "possible", kept by default
+    fresh: results.length - dups.length,
+  }
 }

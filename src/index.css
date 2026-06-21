@@ -309,9 +309,12 @@ select.input {
   transition: border-color 0.15s, background 0.15s;
 }
 .dropzone:hover,
-.dropzone:focus-visible {
+.dropzone:focus-within {
   border-color: var(--accent);
   outline: none;
+}
+.dropzone:focus-within {
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.25);
 }
 .dropzone-active {
   border-color: var(--accent);
@@ -589,6 +592,17 @@ select.input {
   background: rgba(245, 166, 35, 0.14);
   border-color: rgba(245, 166, 35, 0.4);
 }
+.badge-maybe {
+  color: var(--warn);
+  background: rgba(245, 166, 35, 0.1);
+  border-color: rgba(245, 166, 35, 0.35);
+}
+.import-check {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 
 /* ── Register table ─────────────────────────────── */
 .register-wrap {
@@ -668,10 +682,11 @@ select.input {
   font-size: 0.72rem;
   color: var(--text-faint);
 }
-.row-dup td {
-  opacity: 0.55;
+.row-skip td {
+  opacity: 0.5;
 }
-.row-dup td.status-cell {
+.row-skip td.status-cell,
+.row-skip td:first-child {
   opacity: 1;
 }
 

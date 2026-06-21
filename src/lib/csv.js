@@ -33,14 +33,32 @@ export function detectColumns(headers) {
     find((h) => h.includes('payee')) ||
     null
 
-  // A single signed amount column is preferred. "amount" but not "debit/credit".
-  const amount = find((h) => h.includes('amount') || h === 'value')
+  // Split debit/credit columns. Banks name these many ways — Westpac uses
+  // "Debit Amount"/"Credit Amount", YNAB exports use "Outflow"/"Inflow".
+  const debit = find(
+    (h) =>
+      h.includes('debit') || h.includes('withdrawal') || h.includes('outflow')
+  )
+  const credit = find(
+    (h) =>
+      h.includes('credit') || h.includes('deposit') || h.includes('inflow')
+  )
 
-  const debit = find((h) => h.includes('debit') || h.includes('withdrawal'))
-  const credit = find((h) => h.includes('credit') || h.includes('deposit'))
+  // A single signed amount column. Must contain "amount"/"value" but NOT be one
+  // of the split columns above — "Debit Amount"/"Credit Amount" also contain the
+  // word "amount", and matching them here would silently break the sign and drop
+  // every credit row.
+  const amount = find(
+    (h) =>
+      (h.includes('amount') || h === 'value') &&
+      !/debit|credit|withdrawal|deposit|inflow|outflow/.test(h)
+  )
 
+  // Prefer the split layout whenever both columns are present; otherwise use a
+  // lone signed amount column; otherwise fall back to a single debit or credit.
   let layout = 'none'
-  if (amount) layout = 'single'
+  if (debit && credit) layout = 'split'
+  else if (amount) layout = 'single'
   else if (debit || credit) layout = 'split'
 
   return { date, payee, amount, debit, credit, layout }

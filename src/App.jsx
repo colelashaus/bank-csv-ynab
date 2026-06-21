@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Papa from 'papaparse'
 import {
   KeyRound,
@@ -68,7 +68,7 @@ export default function App() {
   const [existing, setExisting] = useState(null) // { list, accountId }
   const [checking, setChecking] = useState(false)
   const [checkError, setCheckError] = useState(null)
-  const [overrides, setOverrides] = useState(() => new Set()) // import_ids to import anyway
+  const [choices, setChoices] = useState(() => new Map()) // import_id -> explicit include/exclude
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importError, setImportError] = useState(null)
@@ -138,7 +138,7 @@ export default function App() {
     let cancelled = false
     setChecking(true)
     setCheckError(null)
-    setOverrides(new Set())
+    setChoices(new Map())
     const since = shiftDate(s.minDate, -(Math.max(windowDays, 7)))
     getAccountTransactions(token.trim(), budgetId, accountId, since)
       .then((list) => {
@@ -167,19 +167,24 @@ export default function App() {
 
   const dupStats = dupResults ? dedupeSummary(dupResults) : null
 
-  // Which transactions will actually be imported (in-range, non-duplicate or
-  // user-overridden). Overrides are keyed by import_id so they survive filtering.
+  // Per-row import decision. Default: exclude STRONG duplicates, keep everything
+  // else (new rows + weak "possible" matches). An explicit user choice (keyed by
+  // import_id so it survives date-range changes) always wins.
+  function importDecision(t, dup) {
+    if (choices.has(t.import_id)) return choices.get(t.import_id)
+    return !(dup && dup.status === 'duplicate' && dup.strong)
+  }
+
   const toImport = useMemo(() => {
     if (!filtered) return []
-    return filtered.transactions.filter(
-      (t, i) =>
-        !dupResults ||
-        dupResults[i].status !== 'duplicate' ||
-        overrides.has(t.import_id)
-    )
-  }, [filtered, dupResults, overrides])
+    return filtered.transactions.filter((t, i) => importDecision(t, dupResults?.[i]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, dupResults, choices])
 
   const importCount = toImport.length
+  const excludedCount = filtered
+    ? filtered.transactions.length - importCount
+    : 0
 
   async function handleConnect(e) {
     e.preventDefault()
@@ -286,11 +291,10 @@ export default function App() {
     }
   }
 
-  function toggleOverride(importId) {
-    setOverrides((prev) => {
-      const next = new Set(prev)
-      if (next.has(importId)) next.delete(importId)
-      else next.add(importId)
+  function setChoice(importId, value) {
+    setChoices((prev) => {
+      const next = new Map(prev)
+      next.set(importId, value)
       return next
     })
   }
@@ -324,7 +328,7 @@ export default function App() {
     setParseError(null)
     setImportResult(null)
     setImportError(null)
-    setOverrides(new Set())
+    setChoices(new Map())
   }
 
   // Which step is "active" for the progress rail.
@@ -522,8 +526,8 @@ export default function App() {
               <Register
                 preview={filtered.preview}
                 dupResults={dupResults}
-                overrides={overrides}
-                onToggleOverride={toggleOverride}
+                decide={(t, dup) => importDecision(t, dup)}
+                onChoice={setChoice}
               />
             )}
 
@@ -535,12 +539,11 @@ export default function App() {
               <div className="import-target">
                 Importing into <strong>{selectedAccount?.name}</strong> in{' '}
                 <strong>{selectedBudget?.name}</strong>
-                {dupStats && dupStats.duplicates > 0 && (
+                {excludedCount > 0 && (
                   <>
                     {' '}
-                    · {dupStats.duplicates} duplicate
-                    {dupStats.duplicates === 1 ? '' : 's'} skipped
-                    {overrides.size > 0 ? ` (${overrides.size} overridden)` : ''}
+                    · {excludedCount} excluded as duplicate
+                    {excludedCount === 1 ? '' : 's'}
                   </>
                 )}
               </div>
@@ -625,11 +628,14 @@ function Section({ step, title, icon: Icon, children }) {
 }
 
 function Dropzone({ fileName, onFile, onClear }) {
-  const inputRef = useRef(null)
   const [dragging, setDragging] = useState(false)
 
+  // A <label> wrapping the file input triggers the native file dialog on click
+  // (and Enter/Space when the input is focused) without any JS — the most
+  // reliable cross-browser approach. Resetting value after selection lets the
+  // same file be picked again.
   return (
-    <div
+    <label
       className={`dropzone ${dragging ? 'dropzone-active' : ''} ${
         fileName ? 'dropzone-filled' : ''
       }`}
@@ -641,40 +647,32 @@ function Dropzone({ fileName, onFile, onClear }) {
       onDrop={(e) => {
         e.preventDefault()
         setDragging(false)
-        const file = e.dataTransfer.files?.[0]
-        onFile(file)
+        onFile(e.dataTransfer.files?.[0])
       }}
-      onClick={() => inputRef.current?.click()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          inputRef.current?.click()
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      aria-label="Choose or drop a CSV file"
     >
       <input
-        ref={inputRef}
         type="file"
         accept=".csv,text/csv"
         className="visually-hidden"
-        onChange={(e) => onFile(e.target.files?.[0])}
+        onChange={(e) => {
+          onFile(e.target.files?.[0])
+          e.target.value = ''
+        }}
       />
       <UploadCloud size={28} className="dropzone-icon" />
       {fileName ? (
         <>
           <p className="dropzone-file">{fileName}</p>
+          <span className="dropzone-sub">Click to choose a different file</span>
           <button
             type="button"
             className="btn btn-ghost btn-sm"
             onClick={(e) => {
-              e.stopPropagation()
+              e.preventDefault()
               onClear()
             }}
           >
-            Choose a different file
+            Clear
           </button>
         </>
       ) : (
@@ -683,7 +681,7 @@ function Dropzone({ fileName, onFile, onClear }) {
           <p className="dropzone-sub">or click to browse</p>
         </>
       )}
-    </div>
+    </label>
   )
 }
 
@@ -873,11 +871,25 @@ function DuplicatePanel({
       <div className="dedupe-body">
         {dupStats.duplicates > 0 ? (
           <span>
-            <strong>{dupStats.duplicates}</strong> of {dupStats.total}{' '}
-            transaction{dupStats.total === 1 ? '' : 's'} look like they’re{' '}
-            <strong>already in {accountName}</strong> — excluded by default.{' '}
-            {dupStats.fresh} new to import. Tick “import anyway” on any row you
-            want to force in.
+            Checked against {existing.list.length} existing transaction
+            {existing.list.length === 1 ? '' : 's'} in{' '}
+            <strong>{accountName}</strong>:{' '}
+            {dupStats.strong > 0 && (
+              <>
+                <strong>{dupStats.strong}</strong> clear duplicate
+                {dupStats.strong === 1 ? '' : 's'} excluded
+              </>
+            )}
+            {dupStats.strong > 0 && dupStats.weak > 0 && '; '}
+            {dupStats.weak > 0 && (
+              <>
+                <strong>{dupStats.weak}</strong> possible match
+                {dupStats.weak === 1 ? '' : 'es'} (same amount &amp; nearby date,
+                different description) — <strong>kept by default</strong>, untick
+                to skip
+              </>
+            )}
+            . {dupStats.fresh} look new. Every row’s “import” box is editable.
           </span>
         ) : (
           <span>
@@ -904,12 +916,13 @@ function DuplicatePanel({
   )
 }
 
-function Register({ preview, dupResults, overrides, onToggleOverride }) {
+function Register({ preview, dupResults, decide, onChoice }) {
   return (
     <div className="register-wrap">
       <table className="register">
         <thead>
           <tr>
+            <th className="num">Import</th>
             <th>Date</th>
             <th>Payee</th>
             <th className="num">Amount</th>
@@ -920,9 +933,34 @@ function Register({ preview, dupResults, overrides, onToggleOverride }) {
           {preview.map((p, i) => {
             const dup = dupResults?.[i]
             const isDup = dup?.status === 'duplicate'
-            const overridden = overrides.has(p.import_id)
+            const willImport = decide(p, dup)
+            let badge = null
+            if (isDup && dup.strong) {
+              badge = (
+                <span className={`badge badge-dup conf-${dup.confidence}`} title={dup.reason}>
+                  duplicate
+                </span>
+              )
+            } else if (isDup) {
+              badge = (
+                <span className="badge badge-maybe" title={dup.reason}>
+                  possible?
+                </span>
+              )
+            } else {
+              badge = <span className="badge badge-new">new</span>
+            }
             return (
-              <tr key={p.import_id} className={isDup && !overridden ? 'row-dup' : ''}>
+              <tr key={p.import_id} className={willImport ? '' : 'row-skip'}>
+                <td className="num">
+                  <input
+                    type="checkbox"
+                    className="import-check"
+                    checked={willImport}
+                    onChange={(e) => onChoice(p.import_id, e.target.checked)}
+                    aria-label={`Import ${p.payee || 'transaction'} ${displayDate(p.date)}`}
+                  />
+                </td>
                 <td className="mono nowrap">{displayDate(p.date)}</td>
                 <td className="payee-cell">
                   {p.payee || <span className="muted">(no description)</span>}
@@ -936,27 +974,8 @@ function Register({ preview, dupResults, overrides, onToggleOverride }) {
                   {money(p.dollars)}
                 </td>
                 <td className="status-cell">
-                  {isDup ? (
-                    <>
-                      <span
-                        className={`badge badge-dup conf-${dup.confidence}`}
-                        title={dup.reason}
-                      >
-                        duplicate
-                      </span>
-                      <label className="override">
-                        <input
-                          type="checkbox"
-                          checked={overridden}
-                          onChange={() => onToggleOverride(p.import_id)}
-                        />
-                        import anyway
-                      </label>
-                      <span className="dup-reason">{dup.reason}</span>
-                    </>
-                  ) : (
-                    <span className="badge badge-new">new</span>
-                  )}
+                  {badge}
+                  {isDup && <span className="dup-reason">{dup.reason}</span>}
                 </td>
               </tr>
             )

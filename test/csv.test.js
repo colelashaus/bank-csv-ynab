@@ -40,6 +40,71 @@ test('detectColumns — case insensitive & details fallback', () => {
   assert.equal(cols.layout, 'single')
 })
 
+test('detectColumns — Westpac "Debit Amount"/"Credit Amount" is split, not single', () => {
+  // Regression: both headers contain the word "amount"; must not be treated as
+  // a single signed-amount column (that broke signs and dropped credit rows).
+  const cols = detectColumns([
+    'Bank Account',
+    'Date',
+    'Narrative',
+    'Debit Amount',
+    'Credit Amount',
+    'Balance',
+    'Categories',
+    'Serial',
+  ])
+  assert.equal(cols.layout, 'split')
+  assert.equal(cols.date, 'Date')
+  assert.equal(cols.payee, 'Narrative')
+  assert.equal(cols.debit, 'Debit Amount')
+  assert.equal(cols.credit, 'Credit Amount')
+  assert.equal(cols.amount, null)
+})
+
+test('detectColumns — YNAB-export Outflow/Inflow is split', () => {
+  const cols = detectColumns(['Account', 'Date', 'Payee', 'Memo', 'Outflow', 'Inflow', 'Cleared'])
+  assert.equal(cols.layout, 'split')
+  assert.equal(cols.debit, 'Outflow')
+  assert.equal(cols.credit, 'Inflow')
+  assert.equal(cols.payee, 'Payee')
+})
+
+test('buildTransactions — Westpac rows: debit negative, credit positive, none dropped', () => {
+  const cols = detectColumns([
+    'Bank Account',
+    'Date',
+    'Narrative',
+    'Debit Amount',
+    'Credit Amount',
+    'Balance',
+  ])
+  const rows = [
+    {
+      'Bank Account': '123456789012',
+      Date: '19/06/2026',
+      Narrative: 'DEBIT CARD PURCHASE WOOLWORTHS 2741 TOWNSVILLE AUS',
+      'Debit Amount': '21.10',
+      'Credit Amount': '',
+      Balance: '3246.83',
+    },
+    {
+      'Bank Account': '123456789012',
+      Date: '18/06/2026',
+      Narrative: 'DEPOSIT CTRLINK PARENT 901J0TJZ302143290K',
+      'Debit Amount': '',
+      'Credit Amount': '674.20',
+      Balance: '3282.88',
+    },
+  ]
+  const { transactions, skipped } = buildTransactions(rows, cols, {
+    accountId: 'acc-1',
+  })
+  assert.equal(skipped.length, 0)
+  assert.equal(transactions.length, 2)
+  assert.equal(transactions[0].amount, -21100) // debit -> outflow
+  assert.equal(transactions[1].amount, 674200) // credit -> inflow
+})
+
 test('parseMoney strips $, commas, spaces', () => {
   assert.equal(parseMoney('-99.90'), -99.9)
   assert.equal(parseMoney('99.90'), 99.9)
