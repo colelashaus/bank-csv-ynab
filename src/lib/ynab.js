@@ -68,7 +68,10 @@ export async function getBudgets(token) {
  * Filters out closed/deleted accounts.
  */
 export async function getAccounts(token, budgetId) {
-  const body = await request(`/budgets/${budgetId}/accounts`, token)
+  const body = await request(
+    `/budgets/${encodeURIComponent(budgetId)}/accounts`,
+    token
+  )
   const accounts = body?.data?.accounts ?? []
   return accounts.filter((a) => !a.closed && !a.deleted)
 }
@@ -82,7 +85,9 @@ export async function getAccounts(token, budgetId) {
 export async function getAccountTransactions(token, budgetId, accountId, sinceDate) {
   const q = sinceDate ? `?since_date=${encodeURIComponent(sinceDate)}` : ''
   const body = await request(
-    `/budgets/${budgetId}/accounts/${accountId}/transactions${q}`,
+    `/budgets/${encodeURIComponent(budgetId)}/accounts/${encodeURIComponent(
+      accountId
+    )}/transactions${q}`,
     token
   )
   const txns = body?.data?.transactions ?? []
@@ -94,10 +99,14 @@ export async function getAccountTransactions(token, budgetId, accountId, sinceDa
  * @returns {{ created: number, duplicates: number }}
  */
 export async function createTransactions(token, budgetId, transactions) {
-  const body = await request(`/budgets/${budgetId}/transactions`, token, {
-    method: 'POST',
-    body: JSON.stringify({ transactions }),
-  })
+  const body = await request(
+    `/budgets/${encodeURIComponent(budgetId)}/transactions`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ transactions }),
+    }
+  )
   const created = body?.data?.transactions?.length ?? 0
   const duplicates = body?.data?.duplicate_import_ids?.length ?? 0
   return { created, duplicates }

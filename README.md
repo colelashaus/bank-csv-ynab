@@ -128,13 +128,48 @@ This repo includes a [`render.yaml`](render.yaml) blueprint that defines a singl
 2. In the [Render dashboard](https://dashboard.render.com/), click
    **New → Blueprint**.
 3. Connect your GitHub account if prompted, select your fork, and approve the
-   blueprint. Render reads `render.yaml`, runs `npm install && npm run build`,
-   and publishes the `dist/` folder.
+   blueprint. Render reads `render.yaml`, runs `npm ci && npm run build`, and
+   publishes the `dist/` folder.
 4. Render gives you a URL like `https://your-app.onrender.com`. Every push to
    `main` afterwards auto-deploys.
 
-The blueprint also adds an SPA rewrite (all paths → `/index.html`) so deep links
-never 404.
+The blueprint also adds an SPA rewrite (all paths → `/index.html`) and the
+security headers described below. **Use the Blueprint flow** (not "Static Site")
+so `render.yaml` — including those headers — is applied; if you set up a plain
+Static Site, replicate the headers from `render.yaml` under the service's
+**Settings → Headers**.
+
+## Security
+
+This app is built so that handing it your YNAB token is low-risk:
+
+- **The token lives only in the browser tab's memory.** It is never written to
+  disk, `localStorage`, cookies, or any server, and it is sent **only** in the
+  `Authorization` header of direct HTTPS calls to `https://api.ynab.com`.
+- **No backend, no database, no analytics, no third-party scripts or trackers.**
+  Nothing about your data leaves your browser except the YNAB calls you trigger.
+- **Content-Security-Policy** (see `render.yaml`) restricts scripts to this
+  origin and restricts all network connections (`connect-src`) to
+  `api.ynab.com`. Even in the unlikely event a dependency were compromised, it
+  could not exfiltrate your token to another server.
+- Additional headers: `X-Frame-Options: DENY` + `frame-ancestors 'none'`
+  (clickjacking), `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  no-referrer`, `Cross-Origin-Opener-Policy`, `Strict-Transport-Security`, and a
+  restrictive `Permissions-Policy`.
+- Builds use `npm ci` against a committed lockfile, and dependencies are kept at
+  `npm audit`-clean versions.
+
+**Things worth knowing as a user:**
+
+- A YNAB Personal Access Token grants **full read/write access to all your
+  budgets** (YNAB doesn't offer scoped tokens). Treat it like a password. You
+  can **revoke it anytime** in YNAB → Account Settings → Developer Settings, and
+  it's reasonable to revoke it once you're done importing.
+- Because the source is public, anyone could host a modified copy that *looks*
+  identical but steals tokens. Only paste your token into a deployment you
+  trust — ideally **your own fork**, or run it locally with `npm run dev`. The
+  safety guarantees above apply to *this* code; they can't vouch for a random
+  third-party host.
 
 ## Tech
 
