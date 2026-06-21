@@ -23,24 +23,27 @@ public: there are no secrets in it, and it never collects yours.
    read; then import. The app reports how many transactions YNAB created and how
    many it skipped as duplicates.
 
-### How it reads bank CSVs
+### How it reads bank CSVs — with an editable column mapping
 
-Bank exports vary, so columns are detected by **header name**
-(case-insensitive), not position. This means most banks' CSVs work without any
-configuration:
+Bank exports vary, so columns are auto-detected by **header name**
+(case-insensitive), not position — most banks' CSVs map correctly with no setup.
+But the detection is only a **starting point**: after you drop a file you get a
+**column-mapping panel** where you can change exactly which CSV column feeds each
+YNAB field:
 
-- **Date** — any header containing `date`. Accepts `DD/MM/YYYY`, `D/M/YYYY`,
-  2-digit years (→ `20xx`), and ISO `YYYY-MM-DD`. Dates are read **day-first**
-  (AU/UK style).
-- **Description** — a header containing `description`, `narrative`, `details`,
-  or `payee`.
-- **Amount** — either a single signed `amount` (or `value`) column, **or**
-  separate `debit`/`credit` (or `withdrawal`/`deposit`) columns. `$`, commas
-  and spaces are stripped; a debit becomes a negative (outflow), a credit a
-  positive (inflow).
+- **Date** *(required)* — accepts `DD/MM/YYYY`, `D/M/YYYY`, 2-digit years
+  (→ `20xx`), and ISO `YYYY-MM-DD`. Dates are read **day-first** (AU/UK style).
+- **Payee** and **Memo** — mapped **independently**, so a messy bank narrative
+  can go to the memo (or nowhere) instead of becoming the payee. Set either to
+  *none* if you don't want it filled.
+- **Amount** — pick the layout: either a single **signed amount** column, **or**
+  separate **Outflow / Inflow** columns. `$`, commas and spaces are stripped; an
+  outflow becomes negative, an inflow positive.
 
-Before you import, the app shows you **which columns it detected** so you can
-confirm the mapping is right for your bank.
+Auto-detection handles common header names (`amount`/`value`,
+`debit`/`credit`/`withdrawal`/`deposit`, `outflow`/`inflow`,
+`description`/`narrative`/`details`/`payee`, `memo`/`reference`/`notes`), and you
+override anything it gets wrong before importing.
 
 Rows with no readable date or amount are never silently dropped: they're
 excluded from the import and listed in the preview as unreadable.

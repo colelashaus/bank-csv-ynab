@@ -9,6 +9,7 @@ import {
   buildTransactions,
   summarize,
   dateInRange,
+  mappingComplete,
 } from '../src/lib/csv.js'
 
 test('detectColumns — single amount layout', () => {
@@ -28,8 +29,8 @@ test('detectColumns — split debit/credit layout', () => {
   ])
   assert.equal(cols.date, 'Transaction Date')
   assert.equal(cols.payee, 'Narrative')
-  assert.equal(cols.debit, 'Debit')
-  assert.equal(cols.credit, 'Credit')
+  assert.equal(cols.outflow, 'Debit')
+  assert.equal(cols.inflow, 'Credit')
   assert.equal(cols.layout, 'split')
 })
 
@@ -56,17 +57,65 @@ test('detectColumns — Westpac "Debit Amount"/"Credit Amount" is split, not sin
   assert.equal(cols.layout, 'split')
   assert.equal(cols.date, 'Date')
   assert.equal(cols.payee, 'Narrative')
-  assert.equal(cols.debit, 'Debit Amount')
-  assert.equal(cols.credit, 'Credit Amount')
-  assert.equal(cols.amount, null)
+  assert.equal(cols.outflow, 'Debit Amount')
+  assert.equal(cols.inflow, 'Credit Amount')
+  assert.equal(cols.amount, '')
 })
 
-test('detectColumns — YNAB-export Outflow/Inflow is split', () => {
+test('detectColumns — YNAB-export Outflow/Inflow/Memo is split', () => {
   const cols = detectColumns(['Account', 'Date', 'Payee', 'Memo', 'Outflow', 'Inflow', 'Cleared'])
   assert.equal(cols.layout, 'split')
-  assert.equal(cols.debit, 'Outflow')
-  assert.equal(cols.credit, 'Inflow')
+  assert.equal(cols.outflow, 'Outflow')
+  assert.equal(cols.inflow, 'Inflow')
   assert.equal(cols.payee, 'Payee')
+  assert.equal(cols.memo, 'Memo')
+})
+
+test('mappingComplete — needs date + amount source', () => {
+  assert.equal(mappingComplete({ date: 'Date', layout: 'single', amount: 'Amount' }), true)
+  assert.equal(mappingComplete({ date: 'Date', layout: 'single', amount: '' }), false)
+  assert.equal(mappingComplete({ date: '', layout: 'single', amount: 'Amount' }), false)
+  assert.equal(mappingComplete({ date: 'Date', layout: 'split', outflow: 'Debit', inflow: '' }), true)
+  assert.equal(mappingComplete({ date: 'Date', layout: 'split', outflow: '', inflow: '' }), false)
+})
+
+test('buildTransactions — payee and memo map independently', () => {
+  const mapping = {
+    date: 'Date',
+    payee: 'Payee',
+    memo: 'Narrative',
+    layout: 'split',
+    amount: '',
+    outflow: 'Debit',
+    inflow: 'Credit',
+  }
+  const { transactions } = buildTransactions(
+    [{ Date: '01/06/2026', Payee: 'Woolworths', Narrative: 'CARD 1234 GROCERIES', Debit: '20.00', Credit: '' }],
+    mapping,
+    { accountId: 'acc-1' }
+  )
+  assert.equal(transactions[0].payee_name, 'Woolworths')
+  assert.equal(transactions[0].memo, 'CARD 1234 GROCERIES')
+  assert.equal(transactions[0].amount, -20000)
+})
+
+test('buildTransactions — payee unmapped leaves payee_name null, narrative to memo', () => {
+  const mapping = {
+    date: 'Date',
+    payee: '',
+    memo: 'Narrative',
+    layout: 'single',
+    amount: 'Amount',
+    outflow: '',
+    inflow: '',
+  }
+  const { transactions } = buildTransactions(
+    [{ Date: '01/06/2026', Narrative: 'SOME LONG BANK NARRATIVE', Amount: '-5.00' }],
+    mapping,
+    { accountId: 'acc-1' }
+  )
+  assert.equal(transactions[0].payee_name, null)
+  assert.equal(transactions[0].memo, 'SOME LONG BANK NARRATIVE')
 })
 
 test('buildTransactions — Westpac rows: debit negative, credit positive, none dropped', () => {
@@ -121,12 +170,12 @@ test('rowAmount — single column passes sign through', () => {
   assert.equal(rowAmount({ Amount: '99.90' }, cols), 99.9)
 })
 
-test('rowAmount — split: debit negative, credit positive', () => {
-  const cols = { layout: 'split', debit: 'Debit', credit: 'Credit' }
-  assert.equal(rowAmount({ Debit: '99.90', Credit: '' }, cols), -99.9)
-  assert.equal(rowAmount({ Debit: '', Credit: '99.90' }, cols), 99.9)
-  assert.equal(rowAmount({ Debit: '12.00', Credit: '' }, cols), -12)
-  assert.ok(Number.isNaN(rowAmount({ Debit: '', Credit: '' }, cols)))
+test('rowAmount — split: outflow negative, inflow positive', () => {
+  const m = { layout: 'split', outflow: 'Debit', inflow: 'Credit' }
+  assert.equal(rowAmount({ Debit: '99.90', Credit: '' }, m), -99.9)
+  assert.equal(rowAmount({ Debit: '', Credit: '99.90' }, m), 99.9)
+  assert.equal(rowAmount({ Debit: '12.00', Credit: '' }, m), -12)
+  assert.ok(Number.isNaN(rowAmount({ Debit: '', Credit: '' }, m)))
 })
 
 test('normalizeDate handles DD/MM/YYYY, D/M/YYYY, 2-digit, ISO', () => {

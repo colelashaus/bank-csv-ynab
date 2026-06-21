@@ -29,6 +29,7 @@ import {
   buildTransactions,
   summarize,
   dateInRange,
+  mappingComplete,
 } from './lib/csv.js'
 import { findDuplicates, dedupeSummary } from './lib/dedupe.js'
 import { money, displayDate, shiftDate, toIso, todayIso } from './lib/format.js'
@@ -56,7 +57,8 @@ export default function App() {
 
   // Step 3 — CSV
   const [fileName, setFileName] = useState('')
-  const [cols, setCols] = useState(null)
+  const [headers, setHeaders] = useState([])
+  const [mapping, setMapping] = useState(null)
   const [parseError, setParseError] = useState(null)
   const [rows, setRows] = useState(null)
 
@@ -76,11 +78,13 @@ export default function App() {
   const selectedBudget = budgets?.find((b) => b.id === budgetId) || null
   const selectedAccount = accounts?.find((a) => a.id === accountId) || null
 
+  const isMapped = mappingComplete(mapping)
+
   // Build YNAB transactions from the parsed CSV (the full, unfiltered set).
   const built = useMemo(() => {
-    if (!rows || !cols || !accountId) return null
-    return buildTransactions(rows, cols, { accountId, cleared })
-  }, [rows, cols, accountId, cleared])
+    if (!rows || !mapping || !accountId || !mappingComplete(mapping)) return null
+    return buildTransactions(rows, mapping, { accountId, cleared })
+  }, [rows, mapping, accountId, cleared])
 
   // Full date span of the file (drives the date pickers' bounds + "All" reset).
   const fullSummary = useMemo(
@@ -96,7 +100,7 @@ export default function App() {
     setFromDate(s.minDate || '')
     setToDate(s.maxDate || '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, cols, accountId])
+  }, [rows, accountId, mapping?.date, mapping?.layout, mapping?.amount, mapping?.outflow, mapping?.inflow])
 
   // Apply the date-range filter. Kept aligned: transactions[i] <-> preview[i].
   const filtered = useMemo(() => {
@@ -126,7 +130,7 @@ export default function App() {
   // flag rows already in YNAB. Scoped to the range so we don't pull years of
   // history. Re-runs when the file, account, range, or match window changes.
   useEffect(() => {
-    if (!rows || !cols || !accountId || !budgetId || !filtered) {
+    if (!rows || !accountId || !budgetId || !filtered) {
       setExisting(null)
       return
     }
@@ -157,7 +161,7 @@ export default function App() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, cols, accountId, budgetId, token, windowDays, fromDate, toDate])
+  }, [rows, accountId, budgetId, token, windowDays, fromDate, toDate, filtered])
 
   // Classify each filtered transaction against the existing ones.
   const dupResults = useMemo(() => {
@@ -238,7 +242,8 @@ export default function App() {
     setFileName(file.name)
     setParseError(null)
     setRows(null)
-    setCols(null)
+    setMapping(null)
+    setHeaders([])
     setImportResult(null)
     setImportError(null)
 
@@ -247,33 +252,24 @@ export default function App() {
       skipEmptyLines: 'greedy',
       transformHeader: (h) => h.trim(),
       complete: (results) => {
-        const headers = results.meta?.fields || []
-        if (!headers.length) {
+        const hdrs = (results.meta?.fields || []).filter((h) => h && h.trim())
+        if (!hdrs.length) {
           setParseError("That file doesn't look like a CSV with a header row.")
           return
         }
-        const detected = detectColumns(headers)
-        if (!detected.date) {
-          setParseError(
-            `Couldn't find a date column. Detected headers: ${headers.join(', ')}`
-          )
-          return
-        }
-        if (detected.layout === 'none') {
-          setParseError(
-            `Couldn't find an amount column (need an "amount", or "debit"/"credit"). Detected headers: ${headers.join(
-              ', '
-            )}`
-          )
-          return
-        }
-        setCols({ ...detected, headers })
+        // Auto-detect a default mapping; the user can adjust every field below.
+        setHeaders(hdrs)
+        setMapping(detectColumns(hdrs))
         setRows(results.data)
       },
       error: (err) => {
         setParseError(`Failed to read the file: ${err.message}`)
       },
     })
+  }
+
+  function updateMapping(patch) {
+    setMapping((prev) => ({ ...prev, ...patch }))
   }
 
   async function handleImport() {
@@ -323,7 +319,8 @@ export default function App() {
 
   function resetCsv() {
     setFileName('')
-    setCols(null)
+    setMapping(null)
+    setHeaders([])
     setRows(null)
     setParseError(null)
     setImportResult(null)
@@ -477,7 +474,14 @@ export default function App() {
               onClear={resetCsv}
             />
             {parseError && <ErrorBox>{parseError}</ErrorBox>}
-            {cols && !parseError && <ColumnMap cols={cols} />}
+            {mapping && !parseError && (
+              <ColumnMapper
+                headers={headers}
+                mapping={mapping}
+                onChange={updateMapping}
+                complete={isMapped}
+              />
+            )}
           </Section>
         )}
 
@@ -685,30 +689,111 @@ function Dropzone({ fileName, onFile, onClear }) {
   )
 }
 
-function ColumnMap({ cols }) {
-  const items = [
-    ['Date', cols.date],
-    ['Description', cols.payee],
-  ]
-  if (cols.layout === 'single') {
-    items.push(['Amount', cols.amount])
-  } else {
-    items.push(['Debit', cols.debit])
-    items.push(['Credit', cols.credit])
-  }
+function ColumnMapper({ headers, mapping, onChange, complete }) {
+  // A render function (not a nested component) so selects don't remount/lose
+  // focus on every keystroke.
+  const renderSelect = (field, required) => (
+    <select
+      className={`input ${required && !mapping[field] ? 'input-missing' : ''}`}
+      value={mapping[field] || ''}
+      onChange={(e) => onChange({ [field]: e.target.value })}
+    >
+      <option value="">{required ? '— choose a column —' : '— none —'}</option>
+      {headers.map((h) => (
+        <option key={h} value={h}>
+          {h}
+        </option>
+      ))}
+    </select>
+  )
+
   return (
-    <div className="colmap">
-      <p className="colmap-title">Detected columns</p>
-      <ul className="colmap-list">
-        {items.map(([role, header]) => (
-          <li key={role}>
-            <span className="colmap-role">{role}</span>
-            <span className={`colmap-header ${header ? '' : 'colmap-missing'}`}>
-              {header || 'not found'}
-            </span>
-          </li>
-        ))}
-      </ul>
+    <div className="mapper">
+      <p className="mapper-title">Map your columns to YNAB fields</p>
+      <p className="mapper-hint">
+        Auto-detected from the headers — change anything that’s wrong. Leave
+        Payee or Memo as “none” if you don’t want them filled.
+      </p>
+
+      <div className="mapper-grid">
+        <label className="mapper-field">
+          <span>
+            Date <em>required</em>
+          </span>
+          {renderSelect('date', true)}
+        </label>
+
+        <label className="mapper-field">
+          <span>Payee</span>
+          {renderSelect('payee', false)}
+        </label>
+
+        <label className="mapper-field">
+          <span>Memo</span>
+          {renderSelect('memo', false)}
+        </label>
+      </div>
+
+      <div className="mapper-amount">
+        <div className="mapper-layout" role="radiogroup" aria-label="Amount layout">
+          <label>
+            <input
+              type="radio"
+              name="layout"
+              checked={mapping.layout === 'single'}
+              onChange={() => onChange({ layout: 'single' })}
+            />
+            One signed amount column
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="layout"
+              checked={mapping.layout === 'split'}
+              onChange={() => onChange({ layout: 'split' })}
+            />
+            Separate outflow &amp; inflow
+          </label>
+        </div>
+
+        {mapping.layout === 'single' ? (
+          <div className="mapper-grid">
+            <label className="mapper-field">
+              <span>
+                Amount <em>required</em>
+              </span>
+              {renderSelect('amount', true)}
+            </label>
+          </div>
+        ) : (
+          <div className="mapper-grid">
+            <label className="mapper-field">
+              <span>Outflow (money out)</span>
+              {renderSelect('outflow', false)}
+            </label>
+            <label className="mapper-field">
+              <span>Inflow (money in)</span>
+              {renderSelect('inflow', false)}
+            </label>
+          </div>
+        )}
+      </div>
+
+      {!complete && (
+        <p className="mapper-warn">
+          <AlertTriangle size={14} /> Pick a <strong>Date</strong> column and{' '}
+          {mapping.layout === 'single' ? (
+            <>
+              an <strong>Amount</strong> column
+            </>
+          ) : (
+            <>
+              at least one of <strong>Outflow</strong> / <strong>Inflow</strong>
+            </>
+          )}{' '}
+          to continue.
+        </p>
+      )}
     </div>
   )
 }

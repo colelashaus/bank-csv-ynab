@@ -5,23 +5,27 @@
 // the already-parsed rows from PapaParse.
 
 /**
- * Detect which CSV columns hold the date, description, and amount(s).
- * Matching is case-insensitive and based on header *names*, not positions,
- * because banks' export column order varies.
+ * Suggest a default column → YNAB-field mapping from the CSV headers. The user
+ * can override every field in the UI. Matching is case-insensitive and based on
+ * header *names*, not positions, because banks' export column order varies.
+ *
+ * Fields use empty string '' for "not mapped" so they slot straight into
+ * <select> values.
  *
  * @param {string[]} headers - header field names from the CSV
  * @returns {{
- *   date: string|null,
- *   payee: string|null,
- *   amount: string|null,
- *   debit: string|null,
- *   credit: string|null,
- *   layout: 'single'|'split'|'none'
+ *   date: string,
+ *   payee: string,
+ *   memo: string,
+ *   amount: string,
+ *   outflow: string,
+ *   inflow: string,
+ *   layout: 'single'|'split'
  * }}
  */
 export function detectColumns(headers) {
   const norm = (h) => String(h ?? '').trim().toLowerCase()
-  const find = (pred) => headers.find((h) => pred(norm(h))) ?? null
+  const find = (pred) => headers.find((h) => pred(norm(h))) ?? ''
 
   const date = find((h) => h.includes('date'))
 
@@ -31,15 +35,22 @@ export function detectColumns(headers) {
     find((h) => h.includes('narrative')) ||
     find((h) => h.includes('details')) ||
     find((h) => h.includes('payee')) ||
-    null
+    ''
 
-  // Split debit/credit columns. Banks name these many ways — Westpac uses
+  // Memo: only if there's an obvious column for it; otherwise leave unmapped.
+  const memo =
+    find((h) => h.includes('memo')) ||
+    find((h) => h.includes('reference')) ||
+    find((h) => h.includes('notes')) ||
+    ''
+
+  // Split outflow/inflow columns. Banks name these many ways — Westpac uses
   // "Debit Amount"/"Credit Amount", YNAB exports use "Outflow"/"Inflow".
-  const debit = find(
+  const outflow = find(
     (h) =>
       h.includes('debit') || h.includes('withdrawal') || h.includes('outflow')
   )
-  const credit = find(
+  const inflow = find(
     (h) =>
       h.includes('credit') || h.includes('deposit') || h.includes('inflow')
   )
@@ -55,13 +66,20 @@ export function detectColumns(headers) {
   )
 
   // Prefer the split layout whenever both columns are present; otherwise use a
-  // lone signed amount column; otherwise fall back to a single debit or credit.
-  let layout = 'none'
-  if (debit && credit) layout = 'split'
+  // lone signed amount column; otherwise fall back to a single outflow/inflow.
+  let layout = 'single'
+  if (outflow && inflow) layout = 'split'
   else if (amount) layout = 'single'
-  else if (debit || credit) layout = 'split'
+  else if (outflow || inflow) layout = 'split'
 
-  return { date, payee, amount, debit, credit, layout }
+  return { date, payee, memo, amount, outflow, inflow, layout }
+}
+
+/** Is a mapping complete enough to import? (date + a usable amount source) */
+export function mappingComplete(m) {
+  if (!m || !m.date) return false
+  if (m.layout === 'single') return !!m.amount
+  return !!(m.outflow || m.inflow)
 }
 
 /**
@@ -91,20 +109,20 @@ export function parseMoney(value) {
 }
 
 /**
- * Compute the signed dollar amount for a row given the detected layout.
+ * Compute the signed dollar amount for a row given the mapping.
  * Returns NaN when no amount can be read.
  */
-export function rowAmount(row, cols) {
-  if (cols.layout === 'single' && cols.amount) {
-    return parseMoney(row[cols.amount])
+export function rowAmount(row, m) {
+  if (m.layout === 'single' && m.amount) {
+    return parseMoney(row[m.amount])
   }
-  if (cols.layout === 'split') {
-    const debit = cols.debit ? parseMoney(row[cols.debit]) : NaN
-    const credit = cols.credit ? parseMoney(row[cols.credit]) : NaN
-    const hasDebit = !Number.isNaN(debit) && debit !== 0
-    const hasCredit = !Number.isNaN(credit) && credit !== 0
-    if (hasDebit) return -Math.abs(debit)
-    if (hasCredit) return Math.abs(credit)
+  if (m.layout === 'split') {
+    const outflow = m.outflow ? parseMoney(row[m.outflow]) : NaN
+    const inflow = m.inflow ? parseMoney(row[m.inflow]) : NaN
+    const hasOut = !Number.isNaN(outflow) && outflow !== 0
+    const hasIn = !Number.isNaN(inflow) && inflow !== 0
+    if (hasOut) return -Math.abs(outflow)
+    if (hasIn) return Math.abs(inflow)
     // Both blank/zero — fall through to NaN so the row is skipped.
     return NaN
   }
@@ -161,7 +179,7 @@ const MEMO_MAX = 200
  * Transform parsed CSV rows into YNAB transaction objects.
  *
  * @param {object[]} rows - array of row objects keyed by header name
- * @param {object} cols - result of detectColumns()
+ * @param {object} mapping - result of detectColumns() (possibly user-edited)
  * @param {{ accountId: string, cleared?: boolean }} opts
  * @returns {{
  *   transactions: object[],   // ready to POST to YNAB
@@ -169,18 +187,20 @@ const MEMO_MAX = 200
  *   skipped: { row: number, reason: string }[],
  * }}
  */
-export function buildTransactions(rows, cols, opts) {
+export function buildTransactions(rows, mapping, opts) {
   const { accountId, cleared = true } = opts
   const transactions = []
   const preview = []
   const skipped = []
   const occurrences = new Map() // `${milliunits}:${date}` -> count so far
 
+  const clean = (v) => String(v ?? '').replace(/\s+/g, ' ').trim()
+
   rows.forEach((row, index) => {
     const rowNo = index + 2 // +1 for 0-index, +1 for header row → spreadsheet row
 
-    const date = cols.date ? normalizeDate(row[cols.date]) : null
-    const dollars = rowAmount(row, cols)
+    const date = mapping.date ? normalizeDate(row[mapping.date]) : null
+    const dollars = rowAmount(row, mapping)
 
     const missingDate = !date
     const missingAmount = Number.isNaN(dollars)
@@ -195,11 +215,16 @@ export function buildTransactions(rows, cols, opts) {
 
     const milliunits = toMilliunits(dollars)
 
-    const rawDesc = cols.payee ? String(row[cols.payee] ?? '').trim() : ''
-    const cleanDesc = rawDesc.replace(/\s+/g, ' ').trim()
-    const payeeName = cleanDesc ? cleanDesc.slice(0, PAYEE_MAX) : null
-    const memo =
-      cleanDesc.length > PAYEE_MAX ? cleanDesc.slice(0, MEMO_MAX) : null
+    // Payee and memo are mapped independently. If no memo column is mapped but
+    // the payee text is too long for YNAB's payee field, keep the full text in
+    // the memo so nothing is lost.
+    const payeeText = mapping.payee ? clean(row[mapping.payee]) : ''
+    const memoText = mapping.memo ? clean(row[mapping.memo]) : ''
+    const payeeName = payeeText ? payeeText.slice(0, PAYEE_MAX) : null
+    let memo = memoText ? memoText.slice(0, MEMO_MAX) : null
+    if (!memo && payeeText.length > PAYEE_MAX) {
+      memo = payeeText.slice(0, MEMO_MAX)
+    }
 
     const key = `${milliunits}:${date}`
     const occurrence = occurrences.get(key) ?? 0
