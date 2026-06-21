@@ -33,6 +33,7 @@ import {
 } from './lib/csv.js'
 import { findDuplicates, dedupeSummary } from './lib/dedupe.js'
 import { money, displayDate, shiftDate, toIso, todayIso } from './lib/format.js'
+import Particles from './Particles.jsx'
 
 const STEPS = [
   { n: 1, label: 'Connect', icon: KeyRound },
@@ -335,7 +336,9 @@ export default function App() {
   if (built) activeStep = 4
 
   return (
-    <div className="page">
+    <>
+      <Particles />
+      <div className="page">
       <header className="masthead">
         <h1>
           Bank CSV <span className="arrow">→</span> YNAB
@@ -594,7 +597,8 @@ export default function App() {
           </a>
         </p>
       </footer>
-    </div>
+      </div>
+    </>
   )
 }
 
