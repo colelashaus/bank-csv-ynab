@@ -8,6 +8,7 @@ import {
   toMilliunits,
   buildTransactions,
   summarize,
+  dateInRange,
 } from '../src/lib/csv.js'
 
 test('detectColumns — single amount layout', () => {
@@ -151,4 +152,26 @@ test('summarize totals and date range', () => {
   assert.equal(s.outflow, -15.5)
   assert.equal(s.minDate, '2026-06-01')
   assert.equal(s.maxDate, '2026-06-03')
+})
+
+test('buildTransactions — exposes import_id on preview rows', () => {
+  const cols = detectColumns(['Date', 'Description', 'Amount'])
+  const { transactions, preview } = buildTransactions(
+    [{ Date: '01/06/2026', Description: 'Coffee', Amount: '-5.50' }],
+    cols,
+    { accountId: 'acc-1' }
+  )
+  assert.equal(preview[0].import_id, transactions[0].import_id)
+  assert.equal(preview[0].import_id, 'YNAB:-5500:2026-06-01:0')
+})
+
+test('dateInRange — inclusive bounds, open-ended when blank', () => {
+  assert.equal(dateInRange('2026-06-15', '2026-06-01', '2026-06-30'), true)
+  assert.equal(dateInRange('2026-06-01', '2026-06-01', '2026-06-30'), true) // lower edge
+  assert.equal(dateInRange('2026-06-30', '2026-06-01', '2026-06-30'), true) // upper edge
+  assert.equal(dateInRange('2026-05-31', '2026-06-01', '2026-06-30'), false)
+  assert.equal(dateInRange('2026-07-01', '2026-06-01', '2026-06-30'), false)
+  assert.equal(dateInRange('2021-01-01', '', '2026-06-30'), true) // no lower bound
+  assert.equal(dateInRange('2030-01-01', '2026-06-01', ''), true) // no upper bound
+  assert.equal(dateInRange('2026-06-15', '', ''), true) // unbounded
 })

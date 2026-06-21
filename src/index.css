@@ -420,6 +420,85 @@ select.input {
   color: var(--warn);
 }
 
+/* ── Date-range filter ──────────────────────────── */
+.range {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+.range-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+.range-head svg {
+  color: var(--accent);
+}
+.range-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.range-count {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.range-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+.range-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.range-field .input {
+  width: auto;
+  color-scheme: dark;
+}
+.range-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+.chip {
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.chip:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.range-invalid {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.82rem;
+  color: var(--warn);
+}
+
 /* ── Duplicate-check panel ──────────────────────── */
 .dedupe {
   display: flex;

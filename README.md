@@ -45,6 +45,16 @@ confirm the mapping is right for your bank.
 Rows with no readable date or amount are never silently dropped: they're
 excluded from the import and listed in the preview as unreadable.
 
+### Pick a date range
+
+Banks often only let you export *everything* (years of history), but you
+usually just want the latest period. The review step has a **date-range filter**
+with From/To pickers and one-click presets — **This month**, **Last month**,
+**Last 30 days**, **This year**, **All** — so you can narrow a giant export down
+to exactly what you want to import. The range drives everything downstream: the
+totals, the duplicate check, and the import all operate on the filtered set, and
+the panel shows how many rows fall outside the range.
+
 ### Duplicate detection
 
 Importing into an account that **already has transactions** (manual entries, a

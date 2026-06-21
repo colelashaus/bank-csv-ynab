@@ -186,6 +186,7 @@ export function buildTransactions(rows, cols, opts) {
     const key = `${milliunits}:${date}`
     const occurrence = occurrences.get(key) ?? 0
     occurrences.set(key, occurrence + 1)
+    const importId = `YNAB:${milliunits}:${date}:${occurrence}`
 
     transactions.push({
       account_id: accountId,
@@ -195,7 +196,7 @@ export function buildTransactions(rows, cols, opts) {
       memo,
       cleared: cleared ? 'cleared' : 'uncleared',
       approved: false,
-      import_id: `YNAB:${milliunits}:${date}:${occurrence}`,
+      import_id: importId,
     })
 
     preview.push({
@@ -205,10 +206,21 @@ export function buildTransactions(rows, cols, opts) {
       memo: memo ?? '',
       dollars,
       milliunits,
+      import_id: importId,
     })
   })
 
   return { transactions, preview, skipped }
+}
+
+/**
+ * Whether an ISO YYYY-MM-DD date falls within an inclusive [from, to] range.
+ * Empty/null bounds are open-ended. Relies on ISO dates sorting lexically.
+ */
+export function dateInRange(iso, from, to) {
+  if (from && iso < from) return false
+  if (to && iso > to) return false
+  return true
 }
 
 /** Summary stats over a preview array for the UI summary strip. */

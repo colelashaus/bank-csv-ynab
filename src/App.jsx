@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Layers,
   Search,
+  CalendarRange,
 } from 'lucide-react'
 import {
   getBudgets,
@@ -23,9 +24,14 @@ import {
   getAccountTransactions,
   createTransactions,
 } from './lib/ynab.js'
-import { detectColumns, buildTransactions, summarize } from './lib/csv.js'
+import {
+  detectColumns,
+  buildTransactions,
+  summarize,
+  dateInRange,
+} from './lib/csv.js'
 import { findDuplicates, dedupeSummary } from './lib/dedupe.js'
-import { money, displayDate, shiftDate } from './lib/format.js'
+import { money, displayDate, shiftDate, toIso, todayIso } from './lib/format.js'
 
 const STEPS = [
   { n: 1, label: 'Connect', icon: KeyRound },
@@ -56,11 +62,13 @@ export default function App() {
 
   // Step 4 — review + import
   const [cleared, setCleared] = useState(true)
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [windowDays, setWindowDays] = useState(3)
   const [existing, setExisting] = useState(null) // { list, accountId }
   const [checking, setChecking] = useState(false)
   const [checkError, setCheckError] = useState(null)
-  const [overrides, setOverrides] = useState(() => new Set()) // indices to import anyway
+  const [overrides, setOverrides] = useState(() => new Set()) // import_ids to import anyway
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importError, setImportError] = useState(null)
@@ -68,26 +76,61 @@ export default function App() {
   const selectedBudget = budgets?.find((b) => b.id === budgetId) || null
   const selectedAccount = accounts?.find((a) => a.id === accountId) || null
 
-  // Build YNAB transactions from the parsed CSV whenever inputs change.
+  // Build YNAB transactions from the parsed CSV (the full, unfiltered set).
   const built = useMemo(() => {
     if (!rows || !cols || !accountId) return null
     return buildTransactions(rows, cols, { accountId, cleared })
   }, [rows, cols, accountId, cleared])
 
-  const summary = useMemo(
+  // Full date span of the file (drives the date pickers' bounds + "All" reset).
+  const fullSummary = useMemo(
     () => (built ? summarize(built.preview) : null),
     [built]
   )
 
-  // Fetch the account's existing transactions for the CSV's date range so we
-  // can flag rows that are already in YNAB. Re-runs when the file, account, or
-  // date window changes (not when the "cleared" toggle flips).
+  // Default the date range to the file's full span whenever a new file/account
+  // is loaded (not when the "cleared" toggle flips).
   useEffect(() => {
-    if (!rows || !cols || !accountId || !budgetId) {
+    if (!built) return
+    const s = summarize(built.preview)
+    setFromDate(s.minDate || '')
+    setToDate(s.maxDate || '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, cols, accountId])
+
+  // Apply the date-range filter. Kept aligned: transactions[i] <-> preview[i].
+  const filtered = useMemo(() => {
+    if (!built) return null
+    if (!fromDate && !toDate) return built
+    const transactions = []
+    const preview = []
+    built.transactions.forEach((t, i) => {
+      if (dateInRange(t.date, fromDate, toDate)) {
+        transactions.push(t)
+        preview.push(built.preview[i])
+      }
+    })
+    return { transactions, preview, skipped: built.skipped }
+  }, [built, fromDate, toDate])
+
+  const excludedByRange = built
+    ? built.transactions.length - filtered.transactions.length
+    : 0
+
+  const summary = useMemo(
+    () => (filtered ? summarize(filtered.preview) : null),
+    [filtered]
+  )
+
+  // Fetch the account's existing transactions for the SELECTED range so we can
+  // flag rows already in YNAB. Scoped to the range so we don't pull years of
+  // history. Re-runs when the file, account, range, or match window changes.
+  useEffect(() => {
+    if (!rows || !cols || !accountId || !budgetId || !filtered) {
       setExisting(null)
       return
     }
-    const s = built ? summarize(built.preview) : null
+    const s = summarize(filtered.preview)
     if (!s || !s.minDate) {
       setExisting({ list: [], accountId })
       return
@@ -114,30 +157,29 @@ export default function App() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, cols, accountId, budgetId, token, windowDays])
+  }, [rows, cols, accountId, budgetId, token, windowDays, fromDate, toDate])
 
-  // Classify each built transaction against the existing ones.
+  // Classify each filtered transaction against the existing ones.
   const dupResults = useMemo(() => {
-    if (!built || !existing || existing.accountId !== accountId) return null
-    return findDuplicates(built.transactions, existing.list, { windowDays })
-  }, [built, existing, accountId, windowDays])
+    if (!filtered || !existing || existing.accountId !== accountId) return null
+    return findDuplicates(filtered.transactions, existing.list, { windowDays })
+  }, [filtered, existing, accountId, windowDays])
 
   const dupStats = dupResults ? dedupeSummary(dupResults) : null
 
-  // Which rows will actually be imported (non-duplicates + user overrides).
-  const importIndices = useMemo(() => {
-    if (!built) return []
-    return built.transactions
-      .map((_, i) => i)
-      .filter(
-        (i) =>
-          !dupResults ||
-          dupResults[i].status !== 'duplicate' ||
-          overrides.has(i)
-      )
-  }, [built, dupResults, overrides])
+  // Which transactions will actually be imported (in-range, non-duplicate or
+  // user-overridden). Overrides are keyed by import_id so they survive filtering.
+  const toImport = useMemo(() => {
+    if (!filtered) return []
+    return filtered.transactions.filter(
+      (t, i) =>
+        !dupResults ||
+        dupResults[i].status !== 'duplicate' ||
+        overrides.has(t.import_id)
+    )
+  }, [filtered, dupResults, overrides])
 
-  const importCount = importIndices.length
+  const importCount = toImport.length
 
   async function handleConnect(e) {
     e.preventDefault()
@@ -230,7 +272,6 @@ export default function App() {
   }
 
   async function handleImport() {
-    const toImport = importIndices.map((i) => built.transactions[i])
     if (!toImport.length) return
     setImporting(true)
     setImportError(null)
@@ -245,13 +286,35 @@ export default function App() {
     }
   }
 
-  function toggleOverride(i) {
+  function toggleOverride(importId) {
     setOverrides((prev) => {
       const next = new Set(prev)
-      if (next.has(i)) next.delete(i)
-      else next.add(i)
+      if (next.has(importId)) next.delete(importId)
+      else next.add(importId)
       return next
     })
+  }
+
+  function applyPreset(name) {
+    const now = new Date()
+    if (name === 'thisMonth') {
+      setFromDate(toIso(new Date(now.getFullYear(), now.getMonth(), 1)))
+      setToDate(todayIso())
+    } else if (name === 'lastMonth') {
+      setFromDate(toIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)))
+      setToDate(toIso(new Date(now.getFullYear(), now.getMonth(), 0)))
+    } else if (name === 'last30') {
+      const d = new Date(now)
+      d.setDate(d.getDate() - 29)
+      setFromDate(toIso(d))
+      setToDate(todayIso())
+    } else if (name === 'thisYear') {
+      setFromDate(`${now.getFullYear()}-01-01`)
+      setToDate(todayIso())
+    } else if (name === 'all') {
+      setFromDate(fullSummary?.minDate || '')
+      setToDate(fullSummary?.maxDate || '')
+    }
   }
 
   function resetCsv() {
@@ -417,6 +480,18 @@ export default function App() {
         {/* ── Step 4: Review & import ───────────────────── */}
         {built && (
           <Section step={4} title="Review & import" icon={ListChecks}>
+            <DateRangePanel
+              fromDate={fromDate}
+              toDate={toDate}
+              onFrom={setFromDate}
+              onTo={setToDate}
+              onPreset={applyPreset}
+              fullSummary={fullSummary}
+              excludedByRange={excludedByRange}
+              shown={filtered?.transactions.length ?? 0}
+              total={built.transactions.length}
+            />
+
             {summary && <SummaryStrip summary={summary} skipped={built.skipped} />}
 
             <DuplicatePanel
@@ -438,12 +513,19 @@ export default function App() {
               Mark imported transactions as <strong>cleared</strong>
             </label>
 
-            <Register
-              preview={built.preview}
-              dupResults={dupResults}
-              overrides={overrides}
-              onToggleOverride={toggleOverride}
-            />
+            {filtered.preview.length === 0 ? (
+              <EmptyNote>
+                No transactions fall within the selected date range. Widen the
+                range above.
+              </EmptyNote>
+            ) : (
+              <Register
+                preview={filtered.preview}
+                dupResults={dupResults}
+                overrides={overrides}
+                onToggleOverride={toggleOverride}
+              />
+            )}
 
             {built.skipped.length > 0 && (
               <SkippedList skipped={built.skipped} />
@@ -633,6 +715,80 @@ function ColumnMap({ cols }) {
   )
 }
 
+function DateRangePanel({
+  fromDate,
+  toDate,
+  onFrom,
+  onTo,
+  onPreset,
+  fullSummary,
+  excludedByRange,
+  shown,
+  total,
+}) {
+  const min = fullSummary?.minDate || undefined
+  const max = fullSummary?.maxDate || undefined
+  const invalid = fromDate && toDate && fromDate > toDate
+  return (
+    <div className="range">
+      <div className="range-head">
+        <CalendarRange size={16} />
+        <span className="range-title">Date range</span>
+        <span className="range-count">
+          {shown} of {total} shown
+          {excludedByRange > 0 ? ` · ${excludedByRange} outside range` : ''}
+        </span>
+      </div>
+      <div className="range-controls">
+        <label className="range-field">
+          From
+          <input
+            type="date"
+            className="input"
+            value={fromDate}
+            min={min}
+            max={max}
+            onChange={(e) => onFrom(e.target.value)}
+          />
+        </label>
+        <label className="range-field">
+          To
+          <input
+            type="date"
+            className="input"
+            value={toDate}
+            min={min}
+            max={max}
+            onChange={(e) => onTo(e.target.value)}
+          />
+        </label>
+        <div className="range-presets">
+          <button type="button" className="chip" onClick={() => onPreset('thisMonth')}>
+            This month
+          </button>
+          <button type="button" className="chip" onClick={() => onPreset('lastMonth')}>
+            Last month
+          </button>
+          <button type="button" className="chip" onClick={() => onPreset('last30')}>
+            Last 30 days
+          </button>
+          <button type="button" className="chip" onClick={() => onPreset('thisYear')}>
+            This year
+          </button>
+          <button type="button" className="chip" onClick={() => onPreset('all')}>
+            All
+          </button>
+        </div>
+      </div>
+      {invalid && (
+        <p className="range-invalid">
+          <AlertTriangle size={13} /> “From” is after “To” — nothing will match.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function SummaryStrip({ summary, skipped }) {
   return (
     <div className="summary">
@@ -764,13 +920,9 @@ function Register({ preview, dupResults, overrides, onToggleOverride }) {
           {preview.map((p, i) => {
             const dup = dupResults?.[i]
             const isDup = dup?.status === 'duplicate'
-            const overridden = overrides.has(i)
-            const willImport = !isDup || overridden
+            const overridden = overrides.has(p.import_id)
             return (
-              <tr
-                key={i}
-                className={isDup && !overridden ? 'row-dup' : ''}
-              >
+              <tr key={p.import_id} className={isDup && !overridden ? 'row-dup' : ''}>
                 <td className="mono nowrap">{displayDate(p.date)}</td>
                 <td className="payee-cell">
                   {p.payee || <span className="muted">(no description)</span>}
@@ -796,7 +948,7 @@ function Register({ preview, dupResults, overrides, onToggleOverride }) {
                         <input
                           type="checkbox"
                           checked={overridden}
-                          onChange={() => onToggleOverride(i)}
+                          onChange={() => onToggleOverride(p.import_id)}
                         />
                         import anyway
                       </label>
@@ -805,7 +957,6 @@ function Register({ preview, dupResults, overrides, onToggleOverride }) {
                   ) : (
                     <span className="badge badge-new">new</span>
                   )}
-                  {!willImport && <span className="visually-hidden">skipped</span>}
                 </td>
               </tr>
             )
