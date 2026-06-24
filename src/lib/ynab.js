@@ -57,10 +57,16 @@ async function request(path, token, options = {}) {
   return body
 }
 
-/** GET /budgets → [{ id, name }] */
+/**
+ * GET /budgets → budgets sorted most-recently-modified first, so the default
+ * selection is the budget the user most recently worked in.
+ */
 export async function getBudgets(token) {
   const body = await request('/budgets', token)
-  return body?.data?.budgets ?? []
+  const budgets = body?.data?.budgets ?? []
+  return [...budgets].sort((a, b) =>
+    String(b.last_modified_on || '').localeCompare(String(a.last_modified_on || ''))
+  )
 }
 
 /**

@@ -173,6 +173,16 @@ a:hover {
   padding: 1.5rem;
   margin-bottom: 1.25rem;
 }
+
+/* The review step holds a wide transaction table — let it break out of the
+   narrow reading column and use the viewport width (centered) so the register
+   has room and never needs a horizontal scrollbar on desktop. */
+.card-wide {
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1180px, calc(100vw - 2rem));
+}
 .card-title {
   display: flex;
   align-items: center;
@@ -919,6 +929,24 @@ select.input {
 }
 .empty-note {
   color: var(--text-dim);
+}
+
+.info-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 1rem 0 0;
+  padding: 0.7rem 0.85rem;
+  background: rgba(245, 166, 35, 0.08);
+  border: 1px solid rgba(245, 166, 35, 0.35);
+  border-radius: var(--radius-sm);
+  color: #f6c873;
+  font-size: 0.86rem;
+}
+.info-note svg {
+  color: var(--warn);
+  flex: none;
+  margin-top: 2px;
 }
 
 /* ── Footer ─────────────────────────────────────── */

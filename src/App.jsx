@@ -44,6 +44,10 @@ const STEPS = [
   { n: 4, label: 'Review & import', icon: ListChecks },
 ]
 
+// Cap how many CSV rows we load. Banks happily export years of history (5k+
+// rows), which makes the register sluggish; only the first N are loaded.
+const MAX_ROWS = 500
+
 export default function App() {
   // Step 1 — token + budgets
   const [token, setToken] = useState('')
@@ -65,6 +69,7 @@ export default function App() {
   const [mapping, setMapping] = useState(null)
   const [parseError, setParseError] = useState(null)
   const [rows, setRows] = useState(null)
+  const [rowsTruncated, setRowsTruncated] = useState(0) // original count if capped
 
   // Step 4 — review + import
   const [cleared, setCleared] = useState(true)
@@ -208,7 +213,8 @@ export default function App() {
     try {
       const list = await getBudgets(t)
       setBudgets(list)
-      if (list.length === 1) {
+      // Default to the most recently modified budget (list is sorted desc).
+      if (list.length) {
         setBudgetId(list[0].id)
         loadAccounts(t, list[0].id)
         loadCategories(t, list[0].id)
@@ -268,6 +274,7 @@ export default function App() {
     setRows(null)
     setMapping(null)
     setHeaders([])
+    setRowsTruncated(0)
     setImportResult(null)
     setImportError(null)
 
@@ -282,9 +289,11 @@ export default function App() {
           return
         }
         // Auto-detect a default mapping; the user can adjust every field below.
+        const data = results.data || []
         setHeaders(hdrs)
         setMapping(detectColumns(hdrs))
-        setRows(results.data)
+        setRowsTruncated(data.length > MAX_ROWS ? data.length : 0)
+        setRows(data.length > MAX_ROWS ? data.slice(0, MAX_ROWS) : data)
       },
       error: (err) => {
         setParseError(`Failed to read the file: ${err.message}`)
@@ -372,6 +381,7 @@ export default function App() {
     setMapping(null)
     setHeaders([])
     setRows(null)
+    setRowsTruncated(0)
     setParseError(null)
     setImportResult(null)
     setImportError(null)
@@ -527,6 +537,14 @@ export default function App() {
               onClear={resetCsv}
             />
             {parseError && <ErrorBox>{parseError}</ErrorBox>}
+            {rowsTruncated > 0 && (
+              <InfoNote>
+                This file has {rowsTruncated.toLocaleString()} rows — only the
+                first {MAX_ROWS} were loaded to keep things responsive. Most bank
+                exports list newest first, so these are usually the most recent.
+                Need older ones? Export a narrower date range from your bank.
+              </InfoNote>
+            )}
             {mapping && !parseError && (
               <ColumnMapper
                 headers={headers}
@@ -540,7 +558,7 @@ export default function App() {
 
         {/* ── Step 4: Review & import ───────────────────── */}
         {built && (
-          <Section step={4} title="Review & import" icon={ListChecks}>
+          <Section step={4} title="Review & import" icon={ListChecks} wide>
             <DateRangePanel
               fromDate={fromDate}
               toDate={toDate}
@@ -690,9 +708,9 @@ function StepRail({ active }) {
   )
 }
 
-function Section({ step, title, icon: Icon, children }) {
+function Section({ step, title, icon: Icon, children, wide }) {
   return (
-    <section className="card">
+    <section className={`card${wide ? ' card-wide' : ''}`}>
       <h2 className="card-title">
         <span className="card-step">{step}</span>
         <Icon size={18} /> {title}
@@ -1256,4 +1274,12 @@ function SuccessNote({ children }) {
 
 function EmptyNote({ children }) {
   return <p className="empty-note">{children}</p>
+}
+
+function InfoNote({ children }) {
+  return (
+    <p className="info-note">
+      <AlertTriangle size={15} /> {children}
+    </p>
+  )
 }
