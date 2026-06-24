@@ -95,6 +95,35 @@ export async function getAccountTransactions(token, budgetId, accountId, sinceDa
 }
 
 /**
+ * Flatten YNAB's category_groups into groups usable in a grouped <select>.
+ * Drops deleted/hidden groups and categories, and the special internal group
+ * (which holds "Inflow: Ready to Assign" etc.). Pure — unit tested.
+ */
+export function flattenCategories(groups) {
+  const out = []
+  for (const g of groups || []) {
+    if (g.deleted || g.hidden) continue
+    if (g.name === 'Internal Master Category') continue
+    const categories = (g.categories || [])
+      .filter((c) => !c.deleted && !c.hidden)
+      .map((c) => ({ id: c.id, name: c.name }))
+    if (categories.length) out.push({ name: g.name, categories })
+  }
+  return out
+}
+
+/**
+ * GET /budgets/{id}/categories → grouped, import-ready categories.
+ */
+export async function getCategories(token, budgetId) {
+  const body = await request(
+    `/budgets/${encodeURIComponent(budgetId)}/categories`,
+    token
+  )
+  return flattenCategories(body?.data?.category_groups ?? [])
+}
+
+/**
  * POST /budgets/{id}/transactions
  * @returns {{ created: number, duplicates: number }}
  */

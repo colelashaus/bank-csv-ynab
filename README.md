@@ -58,6 +58,15 @@ to exactly what you want to import. The range drives everything downstream: the
 totals, the duplicate check, and the import all operate on the filtered set, and
 the panel shows how many rows fall outside the range.
 
+### Assign categories (optional)
+
+In the review step you can set a **YNAB category** per transaction via a grouped
+dropdown (loaded from the selected budget), plus a **"set category for all shown
+rows"** helper. Rows are left **uncategorised by default** — YNAB will then
+auto-assign categories from the payee based on your history, which is usually
+what you want for a fresh bank import. Set categories here only when you'd rather
+do it up front.
+
 ### Duplicate detection
 
 Importing into an account that **already has transactions** (manual entries, a

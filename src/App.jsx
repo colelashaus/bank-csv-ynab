@@ -17,11 +17,13 @@ import {
   Layers,
   Search,
   CalendarRange,
+  Tag,
 } from 'lucide-react'
 import {
   getBudgets,
   getAccounts,
   getAccountTransactions,
+  getCategories,
   createTransactions,
 } from './lib/ynab.js'
 import {
@@ -55,6 +57,7 @@ export default function App() {
   const [loadingAccounts, setLoadingAccounts] = useState(false)
   const [accountsError, setAccountsError] = useState(null)
   const [accountId, setAccountId] = useState('')
+  const [categories, setCategories] = useState(null) // { budgetId, list }
 
   // Step 3 — CSV
   const [fileName, setFileName] = useState('')
@@ -72,6 +75,7 @@ export default function App() {
   const [checking, setChecking] = useState(false)
   const [checkError, setCheckError] = useState(null)
   const [choices, setChoices] = useState(() => new Map()) // import_id -> explicit include/exclude
+  const [categoryChoices, setCategoryChoices] = useState(() => new Map()) // import_id -> category_id
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importError, setImportError] = useState(null)
@@ -206,7 +210,8 @@ export default function App() {
       setBudgets(list)
       if (list.length === 1) {
         setBudgetId(list[0].id)
-        await loadAccounts(t, list[0].id)
+        loadAccounts(t, list[0].id)
+        loadCategories(t, list[0].id)
       }
     } catch (err) {
       setConnectError(err.message)
@@ -230,12 +235,30 @@ export default function App() {
     }
   }
 
+  // Categories are optional convenience — if the fetch fails we just offer no
+  // options (the row stays uncategorised) rather than blocking the import.
+  async function loadCategories(t, bId) {
+    setCategories(null)
+    try {
+      const list = await getCategories(t, bId)
+      setCategories({ budgetId: bId, list })
+    } catch {
+      setCategories({ budgetId: bId, list: [] })
+    }
+  }
+
   function handleBudgetChange(e) {
     const bId = e.target.value
     setBudgetId(bId)
     setAccountId('')
-    if (bId) loadAccounts(token.trim(), bId)
-    else setAccounts(null)
+    setCategoryChoices(new Map()) // category ids differ per budget
+    if (bId) {
+      loadAccounts(token.trim(), bId)
+      loadCategories(token.trim(), bId)
+    } else {
+      setAccounts(null)
+      setCategories(null)
+    }
   }
 
   function handleFile(file) {
@@ -279,7 +302,12 @@ export default function App() {
     setImportError(null)
     setImportResult(null)
     try {
-      const result = await createTransactions(token.trim(), budgetId, toImport)
+      // Attach the chosen category (if any) per transaction.
+      const payload = toImport.map((t) => {
+        const catId = categoryChoices.get(t.import_id)
+        return catId ? { ...t, category_id: catId } : t
+      })
+      const result = await createTransactions(token.trim(), budgetId, payload)
       setImportResult(result)
     } catch (err) {
       setImportError(err.message)
@@ -292,6 +320,27 @@ export default function App() {
     setChoices((prev) => {
       const next = new Map(prev)
       next.set(importId, value)
+      return next
+    })
+  }
+
+  function setCategory(importId, categoryId) {
+    setCategoryChoices((prev) => {
+      const next = new Map(prev)
+      if (categoryId) next.set(importId, categoryId)
+      else next.delete(importId)
+      return next
+    })
+  }
+
+  // Bulk: apply one category to every row currently shown (in the date range).
+  function applyCategoryToAll(categoryId) {
+    setCategoryChoices((prev) => {
+      const next = new Map(prev)
+      for (const t of filtered?.transactions ?? []) {
+        if (categoryId) next.set(t.import_id, categoryId)
+        else next.delete(t.import_id)
+      }
       return next
     })
   }
@@ -327,6 +376,7 @@ export default function App() {
     setImportResult(null)
     setImportError(null)
     setChoices(new Map())
+    setCategoryChoices(new Map())
   }
 
   // Which step is "active" for the progress rail.
@@ -515,14 +565,28 @@ export default function App() {
               onWindowDays={setWindowDays}
             />
 
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={cleared}
-                onChange={(e) => setCleared(e.target.checked)}
-              />
-              Mark imported transactions as <strong>cleared</strong>
-            </label>
+            <div className="review-controls">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={cleared}
+                  onChange={(e) => setCleared(e.target.checked)}
+                />
+                Mark imported transactions as <strong>cleared</strong>
+              </label>
+
+              {categories?.list?.length > 0 && (
+                <label className="bulk-category">
+                  <Tag size={14} /> Set category for all shown rows:
+                  <CategorySelect
+                    groups={categories.list}
+                    value=""
+                    onChange={(v) => applyCategoryToAll(v)}
+                    allLabel="— choose to apply to all —"
+                  />
+                </label>
+              )}
+            </div>
 
             {filtered.preview.length === 0 ? (
               <EmptyNote>
@@ -535,6 +599,9 @@ export default function App() {
                 dupResults={dupResults}
                 decide={(t, dup) => importDecision(t, dup)}
                 onChoice={setChoice}
+                categoryGroups={categories?.list ?? []}
+                categoryChoices={categoryChoices}
+                onCategory={setCategory}
               />
             )}
 
@@ -1005,7 +1072,16 @@ function DuplicatePanel({
   )
 }
 
-function Register({ preview, dupResults, decide, onChoice }) {
+function Register({
+  preview,
+  dupResults,
+  decide,
+  onChoice,
+  categoryGroups,
+  categoryChoices,
+  onCategory,
+}) {
+  const showCategory = categoryGroups && categoryGroups.length > 0
   return (
     <div className="register-wrap">
       <table className="register">
@@ -1015,6 +1091,7 @@ function Register({ preview, dupResults, decide, onChoice }) {
             <th>Date</th>
             <th>Payee</th>
             <th className="num">Amount</th>
+            {showCategory && <th>Category</th>}
             <th>Status</th>
           </tr>
         </thead>
@@ -1062,6 +1139,16 @@ function Register({ preview, dupResults, decide, onChoice }) {
                 >
                   {money(p.dollars)}
                 </td>
+                {showCategory && (
+                  <td className="category-cell">
+                    <CategorySelect
+                      groups={categoryGroups}
+                      value={categoryChoices.get(p.import_id) || ''}
+                      onChange={(v) => onCategory(p.import_id, v)}
+                      allLabel="Uncategorised"
+                    />
+                  </td>
+                )}
                 <td className="status-cell">
                   {badge}
                   {isDup && <span className="dup-reason">{dup.reason}</span>}
@@ -1072,6 +1159,28 @@ function Register({ preview, dupResults, decide, onChoice }) {
         </tbody>
       </table>
     </div>
+  )
+}
+
+// Grouped category dropdown (native <optgroup>). value '' = uncategorised.
+function CategorySelect({ groups, value, onChange, allLabel }) {
+  return (
+    <select
+      className="input category-select"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">{allLabel}</option>
+      {groups.map((g) => (
+        <optgroup key={g.name} label={g.name}>
+          {g.categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
   )
 }
 

@@ -243,13 +243,43 @@ select.input {
   margin: 0;
 }
 
+.review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+.bulk-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.bulk-category svg {
+  color: var(--accent);
+}
+.bulk-category .category-select {
+  width: auto;
+  max-width: 220px;
+}
+.category-cell {
+  min-width: 150px;
+}
+.category-select {
+  padding: 0.35rem 0.45rem;
+  font-size: 0.82rem;
+  max-width: 180px;
+}
+
 .checkbox-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.9rem;
   color: var(--text-dim);
-  margin: 1rem 0;
   cursor: pointer;
 }
 .checkbox-row input {
